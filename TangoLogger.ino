@@ -142,7 +142,6 @@ float whPerMile_Trip;
 int motorThermistorReading = 0;
 float c = 0;
 #ifdef MOTOR_THERMISTOR
-    //int motor5VReading;
     #define motor5VActual 5.0
     float vOut;
     #define Z1 1000.0
@@ -864,9 +863,7 @@ void gatherAndLogData() {
         }
 
 #ifdef MOTOR_THERMISTOR
-        //motor5VReading = analogRead(MOTOR_5V_PIN);
         motorThermistorReading = analogRead(MOTOR_THERMISTOR_PIN);
-        //motor5VActual = 5.0 * (float)motor5VReading / 1024.0;
         vOut = motor5VActual / 1024.0 * (float)motorThermistorReading;
         z2 = ( -1 * vOut * Z1 ) / ( vOut - motor5VActual );
         c = -2 * pow(10,-5) * pow( z2, 2)  + 0.1638 * z2 - 120.28;
