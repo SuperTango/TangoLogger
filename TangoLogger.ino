@@ -250,6 +250,10 @@ uint8_t contrast;               // from 1-5 (display valid range 0-255, but docs
 uint8_t currentMenuItem = 0;
 byte byteRead;
 
+bool bmsTripped = false;
+bool lastBmsTripped = false;
+unsigned long lastBmsTrippedTime;
+
 void setup() {
     Serial.begin(115200);
     lcdSerial.begin(115200);
@@ -267,6 +271,7 @@ void setup() {
 
     pinMode ( WIFLY_RTS, OUTPUT );
     pinMode ( WIFLY_CTS, INPUT );
+    pinMode ( BMS_BUZZER_INPUT, INPUT_PULLUP );
     digitalWrite ( WIFLY_RTS, LOW );
 }
 
@@ -323,7 +328,7 @@ unsigned long start;
 bool issueWiFlyCommand ( char *cmd, char *expectedResponse ) {
     bool found = false;
     strrev ( expectedResponse );
-    wiFlySerial.write ( cmd );
+    writeWiFlySerial ( cmd );
     memset ( buffer, 0, MAX_BUFSIZE );
     start = millis();
 
@@ -400,22 +405,24 @@ void loop_Upload() {
                 Serial.print ( "Issued command '$$$', got 'CMD': " );
                 Serial.println ( gotIt );
 
-                gotIt = issueWiFlyCommand ( "open\r\n", "*OPEN*" );    
+                gotIt = issueWiFlyCommand ( "open 192.168.11.1 80\r\n", "*OPEN*" );    
                 Serial.print ( "Issued command 'open' got '*OPEN*': " );
                 Serial.println ( gotIt );
 
                     // TODO: sprintf uses 2500 bytes. probably should be less lazy and construct the string by hand.
                 sprintf ( buffer, "%04d_%02d_%02d-%02d_%02d_%02d-%s", year, month, day, hour, minute, second, ( ( dir.name[6] == 'L' ) ? "log.csv" : "gps.nmea" ) );
 
-                wiFlySerial.write ( "POST /~altitude/TangoLogger/upload.cgi/" );
-                wiFlySerial.write ( buffer );
+                writeWiFlySerial ( "POST /~altitude/TangoLogger/upload.cgi/" );
+                writeWiFlySerial ( buffer );
                 Serial.println ( buffer );
-                wiFlySerial.write ( " HTTP/1.0\r\n" );
-                wiFlySerial.write ( "Content-Length: " );
-                wiFlySerial.print ( length, DEC );
-                wiFlySerial.write ( "\r\n\r\n" );
+                writeWiFlySerial ( " HTTP/1.0\r\n" );
+                writeWiFlySerial ( "Content-Length: " );
+                bufferString.begin();
+                bufferString.print ( length, DEC );
+                writeWiFlySerial ( buffer );
+                writeWiFlySerial ( "\r\n\r\n" );
                 while ( ( bytesRead = readFile.read ( buffer, MAX_BUFSIZE ) ) > 0 ) {
-                    wiFlySerial.write ( buffer );
+                    writeWiFlySerial ( buffer );
                 }
                 start = millis();
                 Serial.println ( "data from server follows" );
@@ -441,13 +448,28 @@ bool writeWiFlySerial ( char buf[] ) {
     }
 }
 
+bool writeWiFlySerialInt ( int val, uint8_t size ) {
+    int i;
+    for ( i = size - 1; i >= 0; i-- ) {
+        Serial.println ( val >> ( i * 8 )  & 0xFF );
+
+        writeWiFlySerialByte ( val >> ( i * 8 )  & 0xFF );
+    }
+}
+
 #define WIFLY_WRITE_TIMEOUT 3000
 bool writeWiFlySerialByte ( byte b ) {
+    int iterations = 0;
     unsigned long start = millis();
     while ( ( millis() - start ) < WIFLY_WRITE_TIMEOUT ) {
+        iterations++;
         if ( LOW == digitalRead ( WIFLY_CTS ) ) {
-            Serial.write ( b );
+            //Serial.write ( b );
             wiFlySerial.write ( b );
+            if ( iterations > 1 ) {
+                Serial.print ( "iterations: " );
+                Serial.println ( iterations, DEC );
+            }
             return true;
         }
     }
@@ -683,7 +705,7 @@ void loop_WiflyDirect() {
 
     while ( Serial.available() ) {
         byteRead = Serial.read();
-        wiFlySerial.write ( byteRead );
+        writeWiFlySerialByte ( byteRead );
     }
 }
 
