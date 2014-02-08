@@ -431,16 +431,23 @@ void loop_Upload() {
                 while ( ( bytesRead = readFile.read ( buffer, MAX_BUFSIZE ) ) > 0 ) {
                     writeWiFlySerial ( buffer );
                 }
+                readFile.close();
+                Serial.println ( "Done with file" );
                 start = millis();
                 Serial.println ( "data from server follows" );
-                while ( millis() - start < 2500 ) {
+                memset ( buffer, 0, MAX_BUFSIZE );
+                while ( ( strncmp ( buffer, "*SOLC*", 6 ) ) && ( millis() - start < 5000 ) ) {
                     while ( wiFlySerial.available() ) {
                         byteRead = wiFlySerial.read();
                         Serial.write ( byteRead );
+
+
+                        memmove ( buffer + 1, buffer, MAX_BUFSIZE - 1 );
+                        buffer[MAX_BUFSIZE-1] = NULL;
+                        buffer[0] = byteRead;
                     }
                 }
-                readFile.close();
-                Serial.println ( "Done with file" );
+                //gotIt = issueWiFlyCommand ( "close\r\n", "*CLOS*" );    
             }
         }
         didUpload = true;
