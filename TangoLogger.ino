@@ -46,11 +46,13 @@ void printString_P ( Print &stream, int index );
 //#define CAN_INT                       2
 // #define GPS_RX_LED                   4
 // #define GPS_TX_LED                   5
-#define WIFLY_CTS                       38 // Arduino CTS, WiFly RTS, input (from arduino), read this to see if it's ok to send data (HIGH indicates RX buffer full)
-#define WIFLY_RTS                       40 // Arduino RTS, WiFly CTS, output (from arduino), set to LOW to enable wifly to send data to arduino.  set to HIGH to disable.
+#define WIFLY_CTS                       A2 // Arduino CTS, WiFly RTS, input (from arduino), read this to see if it's ok to send data (HIGH indicates RX buffer full)
+#define WIFLY_RTS                       A1 // Arduino RTS, WiFly CTS, output (from arduino), set to LOW to enable wifly to send data to arduino.  set to HIGH to disable.
+#define WIFLY_TCP_OK                    A3 // From WiFly. tells us when connected to AP.
+#define WIFLY_WEB_OPEN                  A0 // To WiFly to tell it to open connection to remote host stored in config
+#define WIFLY_WEB_OK                    A4 // From WiFly. tells us when web connection has been opened.  ok to send data.
 
-#define BMS_BUZZER_OUT                  42
-#define BMS_BUZZER_INPUT                44
+#define BMS_BUZZER_INPUT                6
 
 //#define LCDSERIAL_TX                    18/wiFlySerial_TX // green wire
 //#define LCDSERIAL_RX                    19/wiFlySerial_RX // yellow wire
@@ -58,10 +60,9 @@ void printString_P ( Print &stream, int index );
 //#define GPSSERIAL_RX                    4, but shifted to Serial2.
 //#define GPSSERIAL_TX                    5, but shifted to Serial2.
 
-#define BATTERY_CURRENT_SENSOR_PIN      A14
+#define BATTERY_CURRENT_SENSOR_PIN      A12
 #ifdef MOTOR_THERMISTOR
-    #define MOTOR_THERMISTOR_PIN        A15
-    #define MOTOR_5V_PIN                A1
+    #define MOTOR_THERMISTOR_PIN        A11
 #endif //MOTOR_THERMISTOR
 #define SD_CHIP_SELECT                  9 
 // These are defined in the mcp library defaults.h"
@@ -74,8 +75,8 @@ void printString_P ( Print &stream, int index );
 //
 
 #define lcdSerial Serial1
-#define gpsSerial Serial2
-#define wiFlySerial Serial3
+#define gpsSerial Serial3
+#define wiFlySerial Serial2
 
 SdFat sd;
 SdFile logFile;
