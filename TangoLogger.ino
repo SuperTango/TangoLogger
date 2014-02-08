@@ -798,6 +798,12 @@ void gatherAndLogData() {
     batteryCurrentReadingTotal += batteryCurrentReadingSingle;
     batteryCurrentReadingAvg = batteryCurrentReadingTotal / loopsSinceLastLog;
 
+        // if BMS_BUZZER_INPUT goes LOW, the BMS buzzer has tripped.  
+    bmsTripped = ( digitalRead ( BMS_BUZZER_INPUT ) ) ? false : true;
+    if ( bmsTripped && ! lastBmsTripped ) {
+        lastBmsTrippedTime = millis();
+    }
+
         // The millis() call on the current arduino board was using was WAY off, so i'm using a compensation factor to try to correct it.
         // From this point on, millisSinceLastLog should be closer to the proper time.
     currentMillis = millis();
