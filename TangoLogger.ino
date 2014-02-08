@@ -273,6 +273,10 @@ void setup() {
     pinMode ( WIFLY_CTS, INPUT );
     pinMode ( BMS_BUZZER_INPUT, INPUT_PULLUP );
     digitalWrite ( WIFLY_RTS, LOW );
+    pinMode ( WIFLY_TCP_OK, INPUT );
+    pinMode ( WIFLY_WEB_OK, INPUT );
+    pinMode ( WIFLY_WEB_OPEN, OUTPUT );
+    digitalWrite ( WIFLY_WEB_OPEN, LOW );
 }
 
 /*
@@ -670,15 +674,28 @@ void processUserInput_Menu ( Packet *packet ) {
     }
 }
 
+bool lastWiFlyCTS = true;
+unsigned long lastFoo = 0;
 void processUserInput_WiflyDirect ( Packet *packet ) {
     if ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) {
         programState = PROGRAMSTATE_NORMAL;
         stateChanged = true;
-    } else if ( CFA635_KEY_ENTER_PRESS == packet->data[0] ) {
-        Serial.println ( "Setting WiFly RTS (Arduino RTS, WiFly CTS) to low" );
-        digitalWrite ( WIFLY_RTS, HIGH );
     } else if ( CFA635_KEY_LEFT_PRESS == packet->data[0] ) {
-        Serial.println ( "Left?" );
+        digitalWrite ( WIFLY_RTS, LOW );
+        Serial.println ( "Setting RTS to LOW" );
+    } else if ( CFA635_KEY_RIGHT_PRESS == packet->data[0] ) {
+        digitalWrite ( WIFLY_RTS, HIGH );
+        Serial.println ( "Setting RTS to HIGH" );
+    } else if ( CFA635_KEY_DOWN_PRESS == packet->data[0] ) {
+        digitalWrite ( WIFLY_RTS, HIGH );
+        delayMicroseconds ( 1 );
+        digitalWrite ( WIFLY_RTS, LOW );
+        Serial.println ( "Toggling RTS" );
+    } else if ( CFA635_KEY_UP_PRESS == packet->data[0] ) {
+        digitalWrite ( WIFLY_WEB_OPEN, HIGH );
+        delayMicroseconds ( 1 );
+        digitalWrite ( WIFLY_WEB_OPEN, LOW );
+        Serial.println ( "Toggling WEB_OPEN" );
     }
 }
 
@@ -692,6 +709,24 @@ void processUserInput_Upload ( Packet *packet ) {
 
 
 void loop_WiflyDirect() {
+    int wiFlyCTS = digitalRead ( WIFLY_CTS );
+    if ( lastWiFlyCTS != wiFlyCTS ) {
+        Serial.print ( "wiFlyCTS changed to " );
+        Serial.println ( wiFlyCTS, DEC );
+        lastWiFlyCTS = wiFlyCTS;
+    }
+    if ( millis() - lastFoo > 1000 ) {
+        bool wiFlyCTS = digitalRead ( WIFLY_CTS );
+        bool tcpOK = digitalRead ( WIFLY_TCP_OK );
+        bool webOK = digitalRead ( WIFLY_WEB_OK );
+        Serial.print ( "Status: wiFlyCTS: " );
+        Serial.print ( wiFlyCTS );
+        Serial.print ( ", tcpOK: " );
+        Serial.print ( tcpOK );
+        Serial.print ( ", webOK: " );
+        Serial.println ( webOK );
+        lastFoo = millis();
+    }
     if ( stateChanged ) {
         Serial.println ( "Wifly Direct mode.  Don't forget line endinges (no line ending for '$$$', CRLF for everything else)" );
             // make sure no residual data in the serial buffer sent to the wifly.
