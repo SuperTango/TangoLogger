@@ -370,6 +370,7 @@ void loop_Upload() {
     int16_t bytesRead = 0;
     should_log = false;
     bool gotIt = false;
+    int x = 0;
     if ( stateChanged )  {
         uploadState = UPLOADSTATE_BEGIN;
         stringToLookFor = "*NEPO*";
@@ -383,7 +384,9 @@ void loop_Upload() {
     
         Serial.println ( "About to start getting list of files." );
         sd.vwd()->rewind();
-        while ( readFile.openNext ( sd.vwd(), O_READ ) ) {
+        Serial.println ( "Called rewind ok." );
+        while ( ( readFile.openNext ( sd.vwd(), O_READ ) ) && ( x == 0 ) ) {
+            //x++;
             readFile.dirEntry ( &dir );
             if ( ( dir.name[5] == '-' ) && 
                  ( ( dir.name[6] == 'L' ) || ( dir.name[6] == 'N' ) ) &&
