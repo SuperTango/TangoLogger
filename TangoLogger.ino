@@ -48,9 +48,9 @@ void printString_P ( Print &stream, int index );
 // #define GPS_TX_LED                   5
 #define WIFLY_CTS                       A2 // Arduino CTS, WiFly RTS, input (from arduino), read this to see if it's ok to send data (HIGH indicates RX buffer full)
 #define WIFLY_RTS                       A1 // Arduino RTS, WiFly CTS, output (from arduino), set to LOW to enable wifly to send data to arduino.  set to HIGH to disable.
-#define WIFLY_TCP_OK                    A3 // From WiFly. tells us when connected to AP.
-#define WIFLY_WEB_OPEN                  A0 // To WiFly to tell it to open connection to remote host stored in config
-#define WIFLY_WEB_OK                    A4 // From WiFly. tells us when web connection has been opened.  ok to send data.
+#define WIFLY_TCP_CONNECTED             A3 // From WiFly. tells us when connected to AP.
+#define WIFLY_WEB_CONNECT               A0 // To WiFly to tell it to open connection to remote host stored in config
+#define WIFLY_WEB_CONNECTED             A4 // From WiFly. tells us when web connection has been opened.  ok to send data.
 
 #define BMS_BUZZER_INPUT                6
 
@@ -273,10 +273,9 @@ void setup() {
     pinMode ( WIFLY_CTS, INPUT );
     pinMode ( BMS_BUZZER_INPUT, INPUT_PULLUP );
     digitalWrite ( WIFLY_RTS, LOW );
-    pinMode ( WIFLY_TCP_OK, INPUT );
-    pinMode ( WIFLY_WEB_OK, INPUT );
-    pinMode ( WIFLY_WEB_OPEN, OUTPUT );
-    digitalWrite ( WIFLY_WEB_OPEN, LOW );
+    pinMode ( WIFLY_TCP_CONNECTED, INPUT );
+    pinMode ( WIFLY_WEB_CONNECTED, INPUT );
+    pinMode ( WIFLY_WEB_CONNECT, OUTPUT );
 }
 
 /*
@@ -697,21 +696,19 @@ void processUserInput_WiflyDirect ( Packet *packet ) {
         digitalWrite ( WIFLY_RTS, HIGH );
         Serial.println ( "Setting RTS to HIGH" );
     } else if ( CFA635_KEY_DOWN_PRESS == packet->data[0] ) {
-        digitalWrite ( WIFLY_RTS, HIGH );
-        delayMicroseconds ( 1 );
-        digitalWrite ( WIFLY_RTS, LOW );
-        Serial.println ( "Toggling RTS" );
+        setWiflyWebConnect ( LOW );
+        Serial.println ( "Setting WIFLY_WEB_CONNECT to LOW 5" );
     } else if ( CFA635_KEY_UP_PRESS == packet->data[0] ) {
-        digitalWrite ( WIFLY_WEB_OPEN, HIGH );
-        delayMicroseconds ( 1 );
-        digitalWrite ( WIFLY_WEB_OPEN, LOW );
-        Serial.println ( "Toggling WEB_OPEN" );
+        setWiflyWebConnect ( HIGH );
+        Serial.println ( "Setting WIFLY_WEB_CONNECT to HIGH 6" );
     }
 }
 
 void processUserInput_Upload ( Packet *packet ) {
     if ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) {
         programState = PROGRAMSTATE_NORMAL;
+        Serial.println( "Setting WIFLY_WEB_CONNECT to LOW 3" );
+        setWiflyWebConnect ( LOW );
         stateChanged = true;
 
     }
