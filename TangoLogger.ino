@@ -51,11 +51,15 @@ void printString_P ( Print &stream, int index );
 #define WIFLY_TCP_CONNECTED             A3 // From WiFly. tells us when connected to AP.
 #define WIFLY_WEB_CONNECT               A0 // To WiFly to tell it to open connection to remote host stored in config
 #define WIFLY_WEB_CONNECTED             A4 // From WiFly. tells us when web connection has been opened.  ok to send data.
+bool lastWiflyTcpConnected = false;
+bool wiflyWebConnect = false;
+bool lastWiflyWebConnect = false;
+bool lastWiflyWebConnected = false;
 
 #define BMS_BUZZER_INPUT                6
 
-//#define LCDSERIAL_TX                    18/wiFlySerial_TX // green wire
-//#define LCDSERIAL_RX                    19/wiFlySerial_RX // yellow wire
+//#define LCDSERIAL_TX                    18/wiflySerial_TX // green wire
+//#define LCDSERIAL_RX                    19/wiflySerial_RX // yellow wire
 
 //#define GPSSERIAL_RX                    4, but shifted to Serial2.
 //#define GPSSERIAL_TX                    5, but shifted to Serial2.
@@ -76,7 +80,7 @@ void printString_P ( Print &stream, int index );
 
 #define lcdSerial Serial1
 #define gpsSerial Serial3
-#define wiFlySerial Serial2
+#define wiflySerial Serial2
 
 SdFat sd;
 SdFile logFile;
@@ -257,8 +261,10 @@ unsigned long lastBmsTrippedTime;
 void setup() {
     Serial.begin(115200);
     lcdSerial.begin(115200);
-    //wiFlySerial.begin ( 115200 );
-    wiFlySerial.begin ( 230400 );
+    wiflySerial.begin ( 115200 );
+    //wiflySerial.begin ( 230400 );
+    //wiflySerial.begin ( 460800 );
+    //wiflySerial.begin ( 500000 );
     crystalFontz635.init ( &lcdSerial );
     gpsSerial.begin(GPSRATE);
     analogReference(DEFAULT); // not sure this is necessary anymore...
@@ -336,8 +342,8 @@ bool issueWiFlyCommand ( char *cmd, char *expectedResponse ) {
     start = millis();
 
     while ( ( millis() - start ) < 3000 ) {
-        while ( wiFlySerial.available() ) {
-            byteRead = wiFlySerial.read();
+        while ( wiflySerial.available() ) {
+            byteRead = wiflySerial.read();
             Serial.write ( byteRead );
             memmove ( buffer + 1, buffer, MAX_BUFSIZE - 1 );
             buffer[MAX_BUFSIZE-1] = NULL;
@@ -478,7 +484,7 @@ bool writeWiFlySerialByte ( byte b ) {
         iterations++;
         if ( LOW == digitalRead ( WIFLY_CTS ) ) {
             //Serial.write ( b );
-            wiFlySerial.write ( b );
+            wiflySerial.write ( b );
             if ( iterations > 1 ) {
                 Serial.print ( "iterations: " );
                 Serial.println ( iterations, DEC );
@@ -716,22 +722,24 @@ void processUserInput_Upload ( Packet *packet ) {
 
 
 void loop_WiflyDirect() {
-    int wiFlyCTS = digitalRead ( WIFLY_CTS );
-    if ( lastWiFlyCTS != wiFlyCTS ) {
-        Serial.print ( "wiFlyCTS changed to " );
-        Serial.println ( wiFlyCTS, DEC );
-        lastWiFlyCTS = wiFlyCTS;
+    int wiflyCTS = digitalRead ( WIFLY_CTS );
+    if ( lastWiFlyCTS != wiflyCTS ) {
+        Serial.print ( "wiflyCTS changed to " );
+        Serial.println ( wiflyCTS, DEC );
+        lastWiFlyCTS = wiflyCTS;
     }
     if ( millis() - lastFoo > 1000 ) {
-        bool wiFlyCTS = digitalRead ( WIFLY_CTS );
-        bool tcpOK = digitalRead ( WIFLY_TCP_OK );
-        bool webOK = digitalRead ( WIFLY_WEB_OK );
-        Serial.print ( "Status: wiFlyCTS: " );
-        Serial.print ( wiFlyCTS );
-        Serial.print ( ", tcpOK: " );
-        Serial.print ( tcpOK );
-        Serial.print ( ", webOK: " );
-        Serial.println ( webOK );
+        bool wiflyCTS = digitalRead ( WIFLY_CTS );
+        int tcpConnected = analogRead ( WIFLY_TCP_CONNECTED );
+        int webConnected = analogRead ( WIFLY_WEB_CONNECTED );
+        /*
+        Serial.print ( "Status: wiflyCTS: " );
+        Serial.print ( wiflyCTS );
+        Serial.print ( ", tcpConnected: " );
+        Serial.print ( tcpConnected, DEC );
+        Serial.print ( ", webConnected: " );
+        Serial.println ( webConnected, DEC );
+        */
         lastFoo = millis();
     }
     if ( stateChanged ) {
@@ -741,8 +749,8 @@ void loop_WiflyDirect() {
             Serial.read();
         }
     }
-    while ( wiFlySerial.available() ) {
-        Serial.write ( wiFlySerial.read() );
+    while ( wiflySerial.available() ) {
+        Serial.write ( wiflySerial.read() );
     }
 
     while ( Serial.available() ) {
