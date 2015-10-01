@@ -723,7 +723,7 @@ void updateDisplay_Init() {
     if ( mcp2515_init(CANSPEED_1000) ) {
         lcdPrintString_P ( 2, 11, 3 ); // OK
     } else {
-        lcdPrintString_P ( 2, 11, 4 ); // OK
+        lcdPrintString_P ( 2, 11, 4 ); // FAIL
     } 
     init_logger();
     lcdPrintString_P ( 3, 0, 19 );
