@@ -132,8 +132,8 @@ float distance_GPS;
 float distance_RPM;
 float speed_RPM;
 //float lastDistance_RPM;
-float tripDistance_GPS;
-float tripDistance_RPM;
+float tripDistance_GPS = 0.0;
+float tripDistance_RPM = 0.0;
 
 float batteryWh = 0;
 float batteryWhTotal = 0;
