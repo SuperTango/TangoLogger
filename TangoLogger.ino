@@ -1090,6 +1090,13 @@ void gatherAndLogData() {
         }
         batteryWhTotal += batteryWh;
 
+        // Changed from Sevcon to Kelly KLS8080I.  Can't get the RPMs, so calculate the whPerMile_Trip stuff using GPS info for now.
+        if ( tripDistance_GPS > 0.1) {
+            whPerMile_Trip = batteryWhTotal / tripDistance_GPS;
+            milesPerKwh_Trip = tripDistance_GPS / batteryWhTotal * 1000;
+        }
+
+
 
             /*
              * The conversion of RPMs * diff_millis.  The calculated revs/mi is 789.0804025
@@ -1129,8 +1136,8 @@ void gatherAndLogData() {
             if ( milesPerKwh_RPM >= 99 ) {
                 milesPerKwh_RPM = 99;
             }
-            whPerMile_Trip = batteryWhTotal / tripDistance_RPM;
-            milesPerKwh_Trip = tripDistance_RPM / batteryWhTotal * 1000;
+            //whPerMile_Trip = batteryWhTotal / tripDistance_RPM;
+            //milesPerKwh_Trip = tripDistance_RPM / batteryWhTotal * 1000;
         } else {
             whPerMile_RPM = 0;
             milesPerKwh_RPM = 0;
@@ -1269,11 +1276,15 @@ void updateDisplay_Normal() {
             lcdPrintString_P ( 1, 19, 24 );
         }
 
-        lcdPrintFloat ( 2, 3, milesPerKwh_RPM, 5, 2 );
+        // Can't get RPM, so use GPS info for now.
+        //lcdPrintFloat ( 2, 3, milesPerKwh_RPM, 5, 2 );
+        lcdPrintFloat ( 2, 3, milesPerKwh_GPS, 5, 2 );
         lcdPrintFloat ( 2, 9, milesPerKwh_Trip, 5, 2 );
         lcdPrintInt ( 2, 17, motorTempControllerOD.value, 3, DEC );
 
-        lcdPrintFloat ( 3, 2, tripDistance_RPM, 4, 1 );
+        // Can't get RPM, so use GPS info for now.
+        //lcdPrintFloat ( 3, 2, tripDistance_RPM, 4, 1 );
+        lcdPrintFloat ( 3, 2, tripDistance_GPS, 4, 1 );
         lcdPrintInt ( 3, 10, int ( batteryWhTotal ), 4, DEC );
     } else {
         lcdPrintFloat ( 1, 2, motorVoltageOD.value, 5, 1 );
