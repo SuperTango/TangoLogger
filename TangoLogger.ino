@@ -1040,7 +1040,7 @@ void gatherAndLogData() {
         // Read battery current from hall sensor, and average it since the readings are somewhat jumpy.
         // Keep in mind this requires us to not overflow batteryCurrentReadingTotal.  With an ATMega running at 16MHz
         // this should be fine.  But if we move to something faster, we may want to reevaluate this assumption.
-    batteryCurrentReadingSingle = analogRead ( BATTERY_CURRENT_SENSOR_PIN );
+    batteryCurrentReadingSingle = analogRead ( BATTERY_CURRENT_SENSOR_PIN ) - 3; // the -3 is because the zero and 1.1A offset is off.
     batteryCurrentReadingTotal += batteryCurrentReadingSingle;
     batteryCurrentReadingAvg = batteryCurrentReadingTotal / loopsSinceLastLog;
 
@@ -1406,7 +1406,9 @@ void lcdPrintInt ( uint8_t row, uint8_t col, long l, uint8_t padding, uint8_t ty
 float convertBatteryCurrent ( float batteryCurrentReading ) {
     float batteryCurrent;
     // return batteryCurrentReading * -0.9638554 + 799.0361446 + 2.5; // For CSLA2DK Backwards
-    batteryCurrent = batteryCurrentReading * 0.9638554 - 799.0361446 + 2.5 - 8.3; // For CSLA2DK Forwards
+    //batteryCurrent = batteryCurrentReading * 0.9638554 - 799.0361446 + 2.5 - 8.3; // For CSLA2DK Forwards
+    batteryCurrent = batteryCurrentReading * 1.1298 - 800; // For CSLA2DK Forwards
+
     // return batteryCurrentReading * -05421687 + 449.4578313 + 2.5; // For CSL1EJ Backwards
     // return batteryCurrentReading * 0.9638554 - 449.4578313 + 2.5; // For CSLA1EJ Forwards
     return ( batteryCurrent > 0 ) ? batteryCurrent : 0;
