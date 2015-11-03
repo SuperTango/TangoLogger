@@ -11,6 +11,7 @@
 #include "EEPROM.h"
 #include <PString.h>
 #include "CrystalFontz635.h"
+#include <AltSoftSerial.h>
 
     // Wow, weird bug.  if I don't put the first function declaration here, the arduino IDE 
     // auto generator for function declaration fails.  weird.
@@ -29,6 +30,11 @@ void printString_P ( Print &stream, int index );
 
 #define CONTROLLER_TYPE_KLS8080I 0
 #define CONTROLLER_TYPE_SEVCONGEN4 1
+
+// KLS8080I Serial
+#define KLS8080I_LOGDATA_BUFSIZE 19
+#define REQUEST_TYPE_3A 0x3A
+#define REQUEST_TYPE_3B 0x3B
 
     // EEPROM data
 #define EEPROM_FILENUM_MSB              0
@@ -85,7 +91,17 @@ bool lastWiflyWebConnected = false;
 #define lcdSerial Serial1
 #define gpsSerial Serial3
 #define wiflySerial Serial2
+AltSoftSerial controllerSerial;
 
+// KLS8080I Serial
+unsigned long lastControllerRequestTime = 0;
+uint8_t requestType = REQUEST_TYPE_3A;
+uint8_t controllerBuffer[KLS8080I_LOGDATA_BUFSIZE+1];
+uint8_t controllerBufferIndex = 0;
+uint8_t lastPrintedControllerBufferIndex = 0;
+bool reverseSwitch = 0;
+
+// File logging
 SdFat sd;
 SdFile logFile;
 SdFile nmeaFile;
@@ -1069,21 +1085,54 @@ void gatherAndLogData() {
             }
         }
     } else {
-        if ( ( millis() - last3ARequestTime ) > 500 ) {
-            memset ( controllerBuffer, 0, MAX_BUFSIZE );
-            controllerBuffer[0] = 0x3A;
-            controllerBuffer[2] = 0x3A;
+
+        if ( ( millis() - lastControllerRequestTime ) >= 300 ) {
+            lastControllerRequestTime = millis();
+            //Serial.print ( lastControllerRequestTime, DEC );
+            //Serial.println (": About to make request" );
+            memset ( controllerBuffer, 0, KLS8080I_LOGDATA_BUFSIZE );
+            controllerBuffer[0] = requestType;
+            controllerBuffer[2] = requestType;
+            if ( requestType == REQUEST_TYPE_3A ) {
+                requestType = REQUEST_TYPE_3B;
+            } else {
+                requestType = REQUEST_TYPE_3A;
+            }
             controllerSerial.write ( controllerBuffer, 3 );
             controllerBufferIndex = 0;
-            memset ( controllerBuffer, 0, MAX_BUFSIZE );
+            lastPrintedControllerBufferIndex = 0;
+            memset ( controllerBuffer, 0, KLS8080I_LOGDATA_BUFSIZE );
         }
 
-        while ( int i = controllerSerial.available() > 0 ) {
+        //Serial.println ( controllerSerial.available(), DEC );
+        while ( ( controllerSerial.available() > 0 ) && ( controllerBufferIndex < KLS8080I_LOGDATA_BUFSIZE ) ) {
             byteRead = (uint8_t)controllerSerial.read() & 0xFF;
-            controllerBuffer[controllerBufferIndex] = byteRead;
-            controllerBufferIndex++;
+            if ( controllerBufferIndex < KLS8080I_LOGDATA_BUFSIZE) {
+                controllerBuffer[controllerBufferIndex] = byteRead;
+                controllerBufferIndex++;
+            }
+        }
+        if ( controllerBufferIndex > 0 && controllerBufferIndex > lastPrintedControllerBufferIndex ) {
+            //Serial.print ( millis(), DEC );
+            //Serial.print (": got data.  current index: " );
+            //Serial.println ( controllerBufferIndex, DEC );
+            lastPrintedControllerBufferIndex = controllerBufferIndex;
         }
 
+        if ( controllerBufferIndex == KLS8080I_LOGDATA_BUFSIZE ) {
+            if ( validateKls8080Checksum() ) {
+                if ( controllerBuffer[0] == REQUEST_TYPE_3A ) {
+                    throttleValueOD.value = ( controllerBuffer[2] - 1 ) / 255.0;
+                    reverseSwitch = controllerBuffer[7];
+                    batteryVoltageOD.value = controllerBuffer[11] * 1.0;
+                    heatsinkTempOD.value = controllerBuffer[13] * 1.0;
+                } else {
+                    rpmOD.value = controllerBuffer[4] << 8 | controllerBuffer[5];
+                    motorCurrentOD.value = ( controllerBuffer[6] << 8 | controllerBuffer[7] ) * 0.1;
+                }
+                controllerBufferIndex = 0;
+            }
+        }
     }
 
         // Read battery current from hall sensor, and average it since the readings are somewhat jumpy.
@@ -1139,14 +1188,6 @@ void gatherAndLogData() {
         }
         batteryWhTotal += batteryWh;
 
-        // Changed from Sevcon to Kelly KLS8080I.  Can't get the RPMs, so calculate the whPerMile_Trip stuff using GPS info for now.
-        if ( tripDistance_GPS > 0.1) {
-            whPerMile_Trip = batteryWhTotal / tripDistance_GPS;
-            milesPerKwh_Trip = tripDistance_GPS / batteryWhTotal * 1000;
-        }
-
-
-
             /*
              * The conversion of RPMs * diff_millis.  The calculated revs/mi is 789.0804025
              *
@@ -1185,8 +1226,8 @@ void gatherAndLogData() {
             if ( milesPerKwh_RPM >= 99 ) {
                 milesPerKwh_RPM = 99;
             }
-            //whPerMile_Trip = batteryWhTotal / tripDistance_RPM;
-            //milesPerKwh_Trip = tripDistance_RPM / batteryWhTotal * 1000;
+            whPerMile_Trip = batteryWhTotal / tripDistance_RPM;
+            milesPerKwh_Trip = tripDistance_RPM / batteryWhTotal * 1000;
         } else {
             whPerMile_RPM = 0;
             milesPerKwh_RPM = 0;
@@ -1325,16 +1366,13 @@ void updateDisplay_Normal() {
             lcdPrintString_P ( 1, 19, 24 );
         }
 
-        // Can't get RPM, so use GPS info for now.
-        //lcdPrintFloat ( 2, 3, milesPerKwh_RPM, 5, 2 );
+        lcdPrintFloat ( 2, 3, milesPerKwh_RPM, 5, 2 );
         lcdPrintFloat ( 2, 3, milesPerKwh_GPS, 5, 2 );
         lcdPrintFloat ( 2, 9, milesPerKwh_Trip, 5, 2 );
         //lcdPrintInt ( 2, 17, motorTempControllerOD.value, 3, DEC );
         lcdPrintInt ( 2, 17, c, 3, DEC );
 
-        // Can't get RPM, so use GPS info for now.
-        //lcdPrintFloat ( 3, 2, tripDistance_RPM, 4, 1 );
-        lcdPrintFloat ( 3, 2, tripDistance_GPS, 4, 1 );
+        lcdPrintFloat ( 3, 2, tripDistance_RPM, 4, 1 );
         lcdPrintInt ( 3, 10, int ( batteryWhTotal ), 4, DEC );
     } else {
         lcdPrintFloat ( 1, 2, motorVoltageOD.value, 5, 1 );
@@ -1533,4 +1571,12 @@ void open_logFiles() {
 void setWiflyWebConnect ( boolean value ) {
     wiflyWebConnect = value;
     digitalWrite ( WIFLY_WEB_CONNECT, value );
+}
+
+bool validateKls8080Checksum() {
+    uint16_t sum = 0;
+    for ( int i = 0; i < KLS8080I_LOGDATA_BUFSIZE - 1; i++ ) {
+        sum += controllerBuffer[i];
+    }
+    return ( ( sum & 0xFF ) == controllerBuffer[KLS8080I_LOGDATA_BUFSIZE - 1] );
 }
