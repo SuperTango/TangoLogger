@@ -27,11 +27,15 @@ void printString_P ( Print &stream, int index );
 #define GPSRATE 4800
 #define COMMA ","
 
+#define CONTROLLER_TYPE_KLS8080I 0
+#define CONTROLLER_TYPE_SEVCONGEN4 1
+
     // EEPROM data
 #define EEPROM_FILENUM_MSB              0
 #define EEPROM_FILENUM_LSB              1
 #define EEPROM_BRIGHTNESS               2
 #define EEPROM_CONTRAST                 3
+#define EEPROM_CONTROLLER_TYPE          4
 
 #define MENU_MAX_ITEMS                  4
 
@@ -168,8 +172,8 @@ char *buf_ptr;
 char buffer[MAX_BUFSIZE+1];
 PString bufferString((char*)buffer, sizeof(buffer));
 char str00[] PROGMEM = "TangoLogger";
-char str01[] PROGMEM = "Free RAM: ";
-char str02[] PROGMEM = "CAN Init...";
+char str01[] PROGMEM = "RAM: ";
+char str02[] PROGMEM = "CAN: ";
 char str03[] PROGMEM = "OK";
 char str04[] PROGMEM = "FAIL";
 char str05[] PROGMEM = ",";
@@ -203,10 +207,14 @@ char str32[] PROGMEM = "Exit";
 char str33[] PROGMEM = "WiFly Direct mode.";
 char str34[] PROGMEM = "Use Serial Console.";
 char str35[] PROGMEM = "Cancel (X) Btn exits";
+char str36[] PROGMEM = "Kelly KLS8080I";
+char str37[] PROGMEM = "Sevcon Gen4";
+char str38[] PROGMEM = "YES";
+char str39[] PROGMEM = "NO";
 PROGMEM char *strings[] = { str00, str01, str02, str03, str04, str05, str06, str07, str08, str09, 
                                     str10, str11, str12, str13, str14, str15, str16, str17, str18, str19,  
                                     str20, str21, str22, str23, str24, str25, str26, str27, str28, str29,
-                                    str30, str31, str32, str33, str34, str35 };
+                                    str30, str31, str32, str33, str34, str35, str36, str37, str38, str39 };
 
 bool gotGpsData = false;
 uint32_t loopsSinceLastLog = 0;
@@ -250,6 +258,7 @@ ProgramState programState = PROGRAMSTATE_NORMAL;
 bool stateChanged = true;
 bool dataChanged = true;
 bool displayParamsChanged = true;
+uint8_t controllerType = CONTROLLER_TYPE_KLS8080I;
 uint8_t normalDisplayPage = 0;
 uint8_t brightness;             // from 0-5 (display valid range 0-100)
 uint8_t contrast;               // from 1-5 (display valid range 0-255, but docs say: "0-65 = very light, 66 = light, 95 = about right, 125 = dark, 126-255 = very dark
@@ -262,14 +271,15 @@ unsigned long lastBmsTrippedTime;
 
 SdBaseFile rootFile;
 void setup() {
-    Serial.begin(115200);
-    lcdSerial.begin(115200);
-    wiflySerial.begin ( 115200 );
-    //wiflySerial.begin ( 230400 );
-    //wiflySerial.begin ( 460800 );
-    //wiflySerial.begin ( 500000 );
-    crystalFontz635.init ( &lcdSerial );
+    controllerType = ( EEPROM.read ( EEPROM_CONTROLLER_TYPE ) > CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS8080I : EEPROM.read ( EEPROM_CONTROLLER_TYPE );
+    Serial.begin( 115200 );
+    lcdSerial.begin( 115200 );
+    wiflySerial.begin( 115200 );
     gpsSerial.begin(GPSRATE);
+    if ( controllerType == CONTROLLER_TYPE_KLS8080I ) {
+        controllerSerial.begin( 19200 );
+    }
+    crystalFontz635.init ( &lcdSerial );
     analogReference(DEFAULT); // not sure this is necessary anymore...
 
     updateDisplayWithNewParams(); // Ensure brightness and contrast are setup correctly upon start.
@@ -706,29 +716,50 @@ void processUserInput_Dialog ( Packet *packet ) {
         stateChanged = true;
     }
 }
-
+ 
+/* 01234567890123456789
+  +--------------------+
+  |TangoLogger Init    |
+  |Kelly KLS8080I      |
+  |RAM: 1234 CAN: FAIL |
+  |LogFile: 234        |
+  +--------------------+
+*/
 void updateDisplay_Init() {
     crystalFontz635.clearLCD();
     lcdPrintString_P ( 0, 0, 0 ); // TangoLogger Init
-    lcdPrintString_P ( 1, 0, 1 ); // Free Ram
-    lcdPrintInt ( 1, 10, FreeRam(), 0, DEC );
-    lcdPrintString_P ( 2, 0, 2 ); // CAN INIt
+    if ( controllerType == CONTROLLER_TYPE_KLS8080I ) {
+        lcdPrintString_P ( 1, 0, 36 ); // CAN INIt
+    } else {
+        lcdPrintString_P ( 1, 0, 37 ); // CAN INIt
+    }
+    lcdPrintString_P ( 2, 0, 1 ); // "RAM: "
+    lcdPrintInt ( 2, 5, FreeRam(), 0, DEC );
+    if ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) {
+        lcdPrintString_P ( 2, 11, 2 ); // "CAN: "
+        Serial.println ( "About to init CAN" );
+        if ( mcp2515_init(CANSPEED_1000) ) {
+            lcdPrintString_P ( 2, 11, 3 ); // OK
+        } else {
+            lcdPrintString_P ( 2, 11, 4 ); // FAIL
+        } 
+    }
+    lcdPrintString ( 2, 10, "Therm? " );
+    #ifdef MOTOR_THERMISTOR
+        lcdPrintString_P ( 2, 17, 38 ); // Yes
+    #else
+        lcdPrintString_P ( 2, 17, 39 ); // no
+    #endif
+/*
     #ifdef __AVR_ATmega2560__
     lcdPrintString ( 3, 0, "Mega" );
     #else
     lcdPrintString ( 3, 0, "Not Mega" );
     #endif
-
-    Serial.println ( "About to init CAN" );
-    if ( mcp2515_init(CANSPEED_1000) ) {
-        lcdPrintString_P ( 2, 11, 3 ); // OK
-    } else {
-        lcdPrintString_P ( 2, 11, 4 ); // FAIL
-    } 
+*/
     init_logger();
     lcdPrintString_P ( 3, 0, 19 );
     lcdPrintInt ( 3, 9, file_num, 0, DEC );
-
 }
 
 void updateDisplay_WiflyDirect() {
@@ -993,48 +1024,66 @@ void gatherAndLogData() {
         }
     }
 
-        // Send CANOpen SDO requests for data if we haven't received or sent requests for it in a while.
-        // wait until the system has been up for at least 3 seconds before starting.
-    if ( currentMillis > 3000 ) {
-        uint8_t idCount;
-        for ( idCount = 0; idsToFetch[idCount] != NULL; idCount++ ) {
-            ObjectDictionaryEntry *entry = idsToFetch[idCount];
-                // If we haven't sent a request for or received data for the entry in the last 600ms, 
-                // send a new request for the data. 
-            if ( ( ( millis() - entry->timeReceived ) > 600 ) && ( ( millis() - entry->timeRequested ) > 600 ) ) {
-                entry->timeRequested = millis();
-                request.id = 0x601;
-                request.header.rtr = 0;
-                request.header.length = 8;
-                sdoMsg.type = 2;
-                sdoMsg.length = 0;
-                sdoMsg.index = entry->index;
-                sdoMsg.subIndex = entry->subIndex;
-                sdoMsg.data = 0x0;
-                canOpenLite.sdoMessageToBuffer ( &sdoMsg, request.data );
-                mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
-                mcp2515_send_message(&request);
+    if ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) {
+            // Send CANOpen SDO requests for data if we haven't received or sent requests for it in a while.
+            // wait until the system has been up for at least 3 seconds before starting.
+        if ( currentMillis > 3000 ) {
+            uint8_t idCount;
+            for ( idCount = 0; idsToFetch[idCount] != NULL; idCount++ ) {
+                ObjectDictionaryEntry *entry = idsToFetch[idCount];
+                    // If we haven't sent a request for or received data for the entry in the last 600ms, 
+                    // send a new request for the data. 
+                if ( ( ( millis() - entry->timeReceived ) > 600 ) && ( ( millis() - entry->timeRequested ) > 600 ) ) {
+                    entry->timeRequested = millis();
+                    request.id = 0x601;
+                    request.header.rtr = 0;
+                    request.header.length = 8;
+                    sdoMsg.type = 2;
+                    sdoMsg.length = 0;
+                    sdoMsg.index = entry->index;
+                    sdoMsg.subIndex = entry->subIndex;
+                    sdoMsg.data = 0x0;
+                    canOpenLite.sdoMessageToBuffer ( &sdoMsg, request.data );
+                    mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
+                    mcp2515_send_message(&request);
+                }
             }
         }
-    }
 
-        // Read CANOpen SDO responses
-    while (mcp2515_check_message()) {
-        memset ( &response, 0, sizeof(tCAN));
-        if (mcp2515_get_message(&response)) {
-            if ( response.id == 0x581 ) {
-                canOpenLite.sdoMessageFromBuffer ( &sdoMsg, response.data );
-                for ( int i = 0; idsToFetch[i] != NULL ; i++ ) {
-                    ObjectDictionaryEntry *entry = idsToFetch[i];
-                    if ( ( sdoMsg.index == entry->index ) && ( sdoMsg.subIndex == entry->subIndex ) ) {
-                        //currentMillis = millis();
-                        entry->value = sdoMsg.data * entry->scalingFactor;
-                        entry->timeReceived = millis();
-                        break;
+            // Read CANOpen SDO responses
+        while (mcp2515_check_message()) {
+            memset ( &response, 0, sizeof(tCAN));
+            if (mcp2515_get_message(&response)) {
+                if ( response.id == 0x581 ) {
+                    canOpenLite.sdoMessageFromBuffer ( &sdoMsg, response.data );
+                    for ( int i = 0; idsToFetch[i] != NULL ; i++ ) {
+                        ObjectDictionaryEntry *entry = idsToFetch[i];
+                        if ( ( sdoMsg.index == entry->index ) && ( sdoMsg.subIndex == entry->subIndex ) ) {
+                            //currentMillis = millis();
+                            entry->value = sdoMsg.data * entry->scalingFactor;
+                            entry->timeReceived = millis();
+                            break;
+                        }
                     }
                 }
             }
         }
+    } else {
+        if ( ( millis() - last3ARequestTime ) > 500 ) {
+            memset ( controllerBuffer, 0, MAX_BUFSIZE );
+            controllerBuffer[0] = 0x3A;
+            controllerBuffer[2] = 0x3A;
+            controllerSerial.write ( controllerBuffer, 3 );
+            controllerBufferIndex = 0;
+            memset ( controllerBuffer, 0, MAX_BUFSIZE );
+        }
+
+        while ( int i = controllerSerial.available() > 0 ) {
+            byteRead = (uint8_t)controllerSerial.read() & 0xFF;
+            controllerBuffer[controllerBufferIndex] = byteRead;
+            controllerBufferIndex++;
+        }
+
     }
 
         // Read battery current from hall sensor, and average it since the readings are somewhat jumpy.
