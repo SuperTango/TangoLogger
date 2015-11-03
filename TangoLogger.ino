@@ -1,7 +1,7 @@
     /*
      * functional defines/undefs
      */
-#undef MOTOR_THERMISTOR
+#define MOTOR_THERMISTOR
 
 #include <SdFat.h>
 #include <SdFatUtil.h>
@@ -1280,7 +1280,8 @@ void updateDisplay_Normal() {
         //lcdPrintFloat ( 2, 3, milesPerKwh_RPM, 5, 2 );
         lcdPrintFloat ( 2, 3, milesPerKwh_GPS, 5, 2 );
         lcdPrintFloat ( 2, 9, milesPerKwh_Trip, 5, 2 );
-        lcdPrintInt ( 2, 17, motorTempControllerOD.value, 3, DEC );
+        //lcdPrintInt ( 2, 17, motorTempControllerOD.value, 3, DEC );
+        lcdPrintInt ( 2, 17, c, 3, DEC );
 
         // Can't get RPM, so use GPS info for now.
         //lcdPrintFloat ( 3, 2, tripDistance_RPM, 4, 1 );
