@@ -29,7 +29,7 @@ void printString_P ( Print &stream, int index );
 #define GPSRATE 4800
 #define COMMA ","
 
-#define CONTROLLER_TYPE_KLS8080I 0
+#define CONTROLLER_TYPE_KLS 0
 #define CONTROLLER_TYPE_SEVCONGEN4 1
 
     // EEPROM data
@@ -96,7 +96,7 @@ SdFile nmeaFile;
 SdFile readFile;
 SdFile uploadFile;
 
-// Kelly KLS8080I
+// Kelly KLS
 KellyKLS_Serial klsController;
 bool reverseSwitch;
 
@@ -215,14 +215,16 @@ const char str32[] PROGMEM = "Exit";
 const char str33[] PROGMEM = "WiFly Direct mode.";
 const char str34[] PROGMEM = "Use Serial Console.";
 const char str35[] PROGMEM = "Cancel (X) Btn exits";
-const char str36[] PROGMEM = "Kelly KLS8080I";
+const char str36[] PROGMEM = "  Kelly KLS";
 const char str37[] PROGMEM = "Sevcon Gen4";
 const char str38[] PROGMEM = "YES";
 const char str39[] PROGMEM = "NO";
+const char str40[] PROGMEM = "Ctrlr";
 const char* const strings[] PROGMEM = { str00, str01, str02, str03, str04, str05, str06, str07, str08, str09, 
                                     str10, str11, str12, str13, str14, str15, str16, str17, str18, str19,  
                                     str20, str21, str22, str23, str24, str25, str26, str27, str28, str29,
-                                    str30, str31, str32, str33, str34, str35, str36, str37, str38, str39 };
+                                    str30, str31, str32, str33, str34, str35, str36, str37, str38, str39,
+                                    str40 };
 
 bool gotGpsData = false;
 uint32_t loopsSinceLastLog = 0;
@@ -266,7 +268,7 @@ ProgramState programState = PROGRAMSTATE_NORMAL;
 bool stateChanged = true;
 bool dataChanged = true;
 bool displayParamsChanged = true;
-uint8_t controllerType = CONTROLLER_TYPE_KLS8080I;
+uint8_t controllerType = CONTROLLER_TYPE_KLS;
 uint8_t normalDisplayPage = 0;
 uint8_t brightness;             // from 0-5 (display valid range 0-100)
 uint8_t contrast;               // from 1-5 (display valid range 0-255, but docs say: "0-65 = very light, 66 = light, 95 = about right, 125 = dark, 126-255 = very dark
@@ -279,12 +281,12 @@ unsigned long lastBmsTrippedTime;
 
 SdBaseFile rootFile;
 void setup() {
-    controllerType = ( EEPROM.read ( EEPROM_CONTROLLER_TYPE ) > CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS8080I : EEPROM.read ( EEPROM_CONTROLLER_TYPE );
+    controllerType = ( EEPROM.read ( EEPROM_CONTROLLER_TYPE ) > CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS : EEPROM.read ( EEPROM_CONTROLLER_TYPE );
     Serial.begin( 115200 );
     lcdSerial.begin( 115200 );
     wiflySerial.begin( 115200 );
     gpsSerial.begin(GPSRATE);
-    if ( controllerType == CONTROLLER_TYPE_KLS8080I ) {
+    if ( controllerType == CONTROLLER_TYPE_KLS ) {
         controllerSerial.begin( 19200 );
     }
     crystalFontz635.init ( &lcdSerial );
@@ -737,7 +739,7 @@ void processUserInput_Dialog ( Packet *packet ) {
 void updateDisplay_Init() {
     crystalFontz635.clearLCD();
     lcdPrintString_P ( 0, 0, 0 ); // TangoLogger Init
-    if ( controllerType == CONTROLLER_TYPE_KLS8080I ) {
+    if ( controllerType == CONTROLLER_TYPE_KLS ) {
         lcdPrintString_P ( 1, 0, 36 ); // CAN INIt
     } else {
         lcdPrintString_P ( 1, 0, 37 ); // CAN INIt
@@ -784,6 +786,8 @@ void updateDisplay_WiflyDirect() {
  *             1
  *   01234567890123456789
  *  +--------------------+
+ * 0| Ctrlr    Kelly KLS |
+ * 0| Ctrlr  Sevcon Gen4 |
  * 0| Brightness       3 |
  * 1|>Contrast         4 |
  * 2| Start Upload...    |
@@ -794,10 +798,10 @@ void updateDisplay_Menu() {
     int i;
     if ( stateChanged ) {
         crystalFontz635.clearLCD();
-        lcdPrintString_P ( 0, 1, 17 ); // Brightness
-        lcdPrintString_P ( 1, 1, 30 ); // Contrast
-        lcdPrintString_P ( 2, 1, 31 ); // Start Upload
-        lcdPrintString_P ( 3, 1, 32 ); // Exit
+        lcdPrintString_P ( 0, 1, 40 ); // Ctrlr
+        lcdPrintString_P ( 1, 1, 17 ); // Brightness
+        lcdPrintString_P ( 2, 1, 30 ); // Contrast
+        lcdPrintString_P ( 3, 1, 31 ); // Start Upload
     }
 
     if ( dataChanged || stateChanged || displayParamsChanged ) {
@@ -805,8 +809,13 @@ void updateDisplay_Menu() {
         for ( i = 0; i < MENU_MAX_ITEMS; i++ ) {
             lcdPrintString_P ( i, 0, ( currentMenuItem == i ) ? 29 : 28 );
         }
-        lcdPrintInt ( 0, 18, brightness, 1, DEC );
-        lcdPrintInt ( 1, 18, contrast, 1, DEC );
+        if ( controllerType == CONTROLLER_TYPE_KLS ) {
+            lcdPrintString_P ( 1, 8, 36 );
+        } else {
+            lcdPrintString_P ( 1, 8, 37 );
+        }
+        lcdPrintInt ( 1, 18, brightness, 1, DEC );
+        lcdPrintInt ( 2, 18, contrast, 1, DEC );
     }
 }
 
@@ -875,37 +884,48 @@ void processUserInput_Menu ( Packet *packet ) {
         }
     } else if ( CFA635_KEY_LEFT_PRESS == packet->data[0] ) {
         if ( currentMenuItem == 0 ) {
+            controllerType = ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS : CONTROLLER_TYPE_SEVCONGEN4;
+            EEPROM.write ( EEPROM_CONTROLLER_TYPE, controllerType );
+
+        } else if ( currentMenuItem == 1 ) {
             if ( brightness > 0 ) {
                 brightness--;
                 EEPROM.write ( EEPROM_BRIGHTNESS, brightness );
                 displayParamsChanged = true;
             }
-        } else if ( currentMenuItem == 1 ) {
+        } else if ( currentMenuItem == 2 ) {
             if ( contrast > 1 ) {
                 contrast--;
                 EEPROM.write ( EEPROM_CONTRAST, contrast );
                 displayParamsChanged = true;
             }
-        } else if ( currentMenuItem == 2 ) {
+        } else if ( currentMenuItem == 3 ) {
             deleteAllUploadFiles();
             dialogStr0 = "Deleting UPL files";
             programState = PROGRAMSTATE_DIALOG;
             currentMenuItem = 0;
             stateChanged = true;
 
+/*
+        // When adding the controller selection, no more WIFLYDIRECT. for now.
         } else if ( currentMenuItem == 3 ) {
             currentMenuItem = 0;
             programState = PROGRAMSTATE_WIFLYDIRECT;
             stateChanged = true;
+*/
         }
     } else if ( CFA635_KEY_RIGHT_PRESS == packet->data[0] ) {
         if ( currentMenuItem == 0 ) {
+            controllerType = ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS : CONTROLLER_TYPE_SEVCONGEN4;
+            EEPROM.write ( EEPROM_CONTROLLER_TYPE, controllerType );
+
+        } else if ( currentMenuItem == 1 ) {
             if ( brightness < 5 ) {
                 brightness++;
                 EEPROM.write ( EEPROM_BRIGHTNESS, brightness );
                 displayParamsChanged = true;
             }
-        } else if ( currentMenuItem == 1 ) {
+        } else if ( currentMenuItem == 2 ) {
             if ( contrast < 5 ) {
                 contrast++;
                 EEPROM.write ( EEPROM_CONTRAST, contrast );
@@ -1078,7 +1098,7 @@ void gatherAndLogData() {
             }
         }
     } else {
-        // Read data from Kelly KLS8080I serial connection.
+        // Read data from Kelly KLS serial connection.
         if ( klsController.readData() ) {
             throttleValueOD.value = klsController.throttlePercent;
             reverseSwitch = klsController.reverseSwitch;
