@@ -2,3 +2,5 @@
 .*.swo
 *~
 wifly-configs
+libraries
+.DS_Store
