@@ -12,6 +12,7 @@
 #include <PString.h>
 #include "CrystalFontz635.h"
 #include <AltSoftSerial.h>
+#include "KellyKLS_Serial.h"
 
     // Wow, weird bug.  if I don't put the first function declaration here, the arduino IDE 
     // auto generator for function declaration fails.  weird.
@@ -30,11 +31,6 @@ void printString_P ( Print &stream, int index );
 
 #define CONTROLLER_TYPE_KLS8080I 0
 #define CONTROLLER_TYPE_SEVCONGEN4 1
-
-// KLS8080I Serial
-#define KLS8080I_LOGDATA_BUFSIZE 19
-#define REQUEST_TYPE_3A 0x3A
-#define REQUEST_TYPE_3B 0x3B
 
     // EEPROM data
 #define EEPROM_FILENUM_MSB              0
@@ -93,20 +89,16 @@ bool lastWiflyWebConnected = false;
 #define wiflySerial Serial2
 AltSoftSerial controllerSerial;
 
-// KLS8080I Serial
-unsigned long lastControllerRequestTime = 0;
-uint8_t requestType = REQUEST_TYPE_3A;
-uint8_t controllerBuffer[KLS8080I_LOGDATA_BUFSIZE+1];
-uint8_t controllerBufferIndex = 0;
-uint8_t lastPrintedControllerBufferIndex = 0;
-bool reverseSwitch = 0;
-
 // File logging
 SdFat sd;
 SdFile logFile;
 SdFile nmeaFile;
 SdFile readFile;
 SdFile uploadFile;
+
+// Kelly KLS8080I
+KellyKLS_Serial klsController;
+bool reverseSwitch;
 
 //Print *stream = &Serial;
 Print *stream = &logFile;
@@ -214,7 +206,7 @@ char str23[] PROGMEM = "R:";
 char str24[] PROGMEM = "!";
 char str25[] PROGMEM = "I:";
 char str26[] PROGMEM = "Init OK!";
-char str27[] PROGMEM = "#LOGFMT 7 ";
+char str27[] PROGMEM = "#LOGFMT 8 ";
 char str28[] PROGMEM = " ";
 char str29[] PROGMEM = { 0x10, 0x0 }; // arrow (for menu)
 char str30[] PROGMEM = "Contrast";
@@ -296,6 +288,7 @@ void setup() {
         controllerSerial.begin( 19200 );
     }
     crystalFontz635.init ( &lcdSerial );
+    klsController.init ( &controllerSerial );
     analogReference(DEFAULT); // not sure this is necessary anymore...
 
     updateDisplayWithNewParams(); // Ensure brightness and contrast are setup correctly upon start.
@@ -1085,53 +1078,14 @@ void gatherAndLogData() {
             }
         }
     } else {
-
-        if ( ( millis() - lastControllerRequestTime ) >= 300 ) {
-            lastControllerRequestTime = millis();
-            //Serial.print ( lastControllerRequestTime, DEC );
-            //Serial.println (": About to make request" );
-            memset ( controllerBuffer, 0, KLS8080I_LOGDATA_BUFSIZE );
-            controllerBuffer[0] = requestType;
-            controllerBuffer[2] = requestType;
-            if ( requestType == REQUEST_TYPE_3A ) {
-                requestType = REQUEST_TYPE_3B;
-            } else {
-                requestType = REQUEST_TYPE_3A;
-            }
-            controllerSerial.write ( controllerBuffer, 3 );
-            controllerBufferIndex = 0;
-            lastPrintedControllerBufferIndex = 0;
-            memset ( controllerBuffer, 0, KLS8080I_LOGDATA_BUFSIZE );
-        }
-
-        //Serial.println ( controllerSerial.available(), DEC );
-        while ( ( controllerSerial.available() > 0 ) && ( controllerBufferIndex < KLS8080I_LOGDATA_BUFSIZE ) ) {
-            byteRead = (uint8_t)controllerSerial.read() & 0xFF;
-            if ( controllerBufferIndex < KLS8080I_LOGDATA_BUFSIZE) {
-                controllerBuffer[controllerBufferIndex] = byteRead;
-                controllerBufferIndex++;
-            }
-        }
-        if ( controllerBufferIndex > 0 && controllerBufferIndex > lastPrintedControllerBufferIndex ) {
-            //Serial.print ( millis(), DEC );
-            //Serial.print (": got data.  current index: " );
-            //Serial.println ( controllerBufferIndex, DEC );
-            lastPrintedControllerBufferIndex = controllerBufferIndex;
-        }
-
-        if ( controllerBufferIndex == KLS8080I_LOGDATA_BUFSIZE ) {
-            if ( validateKls8080Checksum() ) {
-                if ( controllerBuffer[0] == REQUEST_TYPE_3A ) {
-                    throttleValueOD.value = ( controllerBuffer[2] - 1 ) / 255.0;
-                    reverseSwitch = controllerBuffer[7];
-                    batteryVoltageOD.value = controllerBuffer[11] * 1.0;
-                    heatsinkTempOD.value = controllerBuffer[13] * 1.0;
-                } else {
-                    rpmOD.value = controllerBuffer[4] << 8 | controllerBuffer[5];
-                    motorCurrentOD.value = ( controllerBuffer[6] << 8 | controllerBuffer[7] ) * 0.1;
-                }
-                controllerBufferIndex = 0;
-            }
+        // Read data from Kelly KLS8080I serial connection.
+        if ( klsController.readData() ) {
+            throttleValueOD.value = klsController.throttlePercent;
+            reverseSwitch = klsController.reverseSwitch;
+            batteryVoltageOD.value = klsController.batteryVoltage;
+            heatsinkTempOD.value = klsController.controllerTemp;;
+            rpmOD.value = klsController.rpm;
+            motorCurrentOD.value = klsController.motorCurrent;
         }
     }
 
@@ -1283,6 +1237,9 @@ void gatherAndLogData() {
             printFloat ( *stream, throttleValueOD.value, 4 );
             printFloat ( *stream, bdiOD.value, 4 );
             printFloat ( *stream, heatsinkTempOD.value, 4 );
+            printFloat ( *stream, reverseSwitch, DEC );
+            printInt ( *stream, millis() - klsController.last3APacketReceivedMillis, DEC );
+            printInt ( *stream, millis() - klsController.last3BPacketReceivedMillis, DEC );
             printLine ( *stream );
         }
 
@@ -1367,7 +1324,6 @@ void updateDisplay_Normal() {
         }
 
         lcdPrintFloat ( 2, 3, milesPerKwh_RPM, 5, 2 );
-        lcdPrintFloat ( 2, 3, milesPerKwh_GPS, 5, 2 );
         lcdPrintFloat ( 2, 9, milesPerKwh_Trip, 5, 2 );
         //lcdPrintInt ( 2, 17, motorTempControllerOD.value, 3, DEC );
         lcdPrintInt ( 2, 17, c, 3, DEC );
@@ -1573,10 +1529,3 @@ void setWiflyWebConnect ( boolean value ) {
     digitalWrite ( WIFLY_WEB_CONNECT, value );
 }
 
-bool validateKls8080Checksum() {
-    uint16_t sum = 0;
-    for ( int i = 0; i < KLS8080I_LOGDATA_BUFSIZE - 1; i++ ) {
-        sum += controllerBuffer[i];
-    }
-    return ( ( sum & 0xFF ) == controllerBuffer[KLS8080I_LOGDATA_BUFSIZE - 1] );
-}
