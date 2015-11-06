@@ -69,10 +69,12 @@ bool KellyKLS_Serial::readData() {
                 last3BPacketReceivedMillis = millis();
             }
             controllerBufferIndex = 0;
+            return true;
         } else {
             //Serial.println ( "Checksum bad!" );
         }
     }
+    return false;
 }
 bool KellyKLS_Serial::validateChecksum() {
     uint16_t sum = 0;
