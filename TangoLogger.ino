@@ -1505,9 +1505,22 @@ void init_logger() {
     // initialize the SD card at SPI_HALF_SPEED to avoid bus errors with
     // breadboards.  use SPI_FULL_SPEED for better performance.
     // if SD chip select is not SS, the second argument to init is CS pin number
-    if (! sd.begin(SD_CHIP_SELECT, SPI_FULL_SPEED)) {
-        lcdPrintString_P ( 3, 0, 41 );
-        sd.initErrorHalt();
+    bool success = false;
+    int i = 0;
+    while ( ( success == false ) && ( i < 100 ) ) {
+        Serial.print ( "attempting SD Init: " );
+        Serial.println ( i, DEC );
+        if (! sd.begin(SD_CHIP_SELECT, SPI_HALF_SPEED)) {
+            delay ( 100 );
+            lcdPrintString_P ( 3, 0, 41 );
+            if ( i >= 50 ) {
+                sd.initErrorHalt();
+            }
+        } else {
+            Serial.println ( "Success!" );
+            success = true;
+        }
+        i++;
     }
     SdFile::dateTimeCallback(tangoDateTimeCallback);
 
