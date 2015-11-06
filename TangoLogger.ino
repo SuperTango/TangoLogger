@@ -220,11 +220,12 @@ const char str37[] PROGMEM = "Sevcon Gen4";
 const char str38[] PROGMEM = "YES";
 const char str39[] PROGMEM = "NO";
 const char str40[] PROGMEM = "Ctrlr:";
+const char str41[] PROGMEM = "SD Init Fail";
 const char* const strings[] PROGMEM = { str00, str01, str02, str03, str04, str05, str06, str07, str08, str09, 
                                     str10, str11, str12, str13, str14, str15, str16, str17, str18, str19,  
                                     str20, str21, str22, str23, str24, str25, str26, str27, str28, str29,
                                     str30, str31, str32, str33, str34, str35, str36, str37, str38, str39,
-                                    str40 };
+                                    str40, str41 };
 
 bool gotGpsData = false;
 uint32_t loopsSinceLastLog = 0;
@@ -1503,6 +1504,7 @@ void init_logger() {
     // breadboards.  use SPI_FULL_SPEED for better performance.
     // if SD chip select is not SS, the second argument to init is CS pin number
     if (! sd.begin(SD_CHIP_SELECT, SPI_FULL_SPEED)) {
+        lcdPrintString_P ( 3, 0, 41 );
         sd.initErrorHalt();
     }
     SdFile::dateTimeCallback(tangoDateTimeCallback);
