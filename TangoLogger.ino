@@ -888,6 +888,7 @@ void processUserInput_Menu ( Packet *packet ) {
         if ( currentMenuItem == 0 ) {
             controllerType = ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS_S : CONTROLLER_TYPE_SEVCONGEN4;
             EEPROM.write ( EEPROM_CONTROLLER_TYPE, controllerType );
+            displayParamsChanged = true;
 
         } else if ( currentMenuItem == 1 ) {
             if ( brightness > 0 ) {
@@ -920,6 +921,7 @@ void processUserInput_Menu ( Packet *packet ) {
         if ( currentMenuItem == 0 ) {
             controllerType = ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS_S : CONTROLLER_TYPE_SEVCONGEN4;
             EEPROM.write ( EEPROM_CONTROLLER_TYPE, controllerType );
+            displayParamsChanged = true;
 
         } else if ( currentMenuItem == 1 ) {
             if ( brightness < 5 ) {
