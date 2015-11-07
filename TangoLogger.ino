@@ -1507,14 +1507,15 @@ void init_logger() {
     // if SD chip select is not SS, the second argument to init is CS pin number
     bool success = false;
     int i = 0;
-    while ( ( success == false ) && ( i < 100 ) ) {
+    while ( ( success == false ) && ( i < 5 ) ) {
         Serial.print ( "attempting SD Init: " );
         Serial.println ( i, DEC );
         if (! sd.begin(SD_CHIP_SELECT, SPI_HALF_SPEED)) {
             delay ( 100 );
             lcdPrintString_P ( 3, 0, 41 );
+            lcdPrintInt ( 3, 17, i, 0, DEC );
             if ( i >= 50 ) {
-                sd.initErrorHalt();
+                //sd.initErrorHalt();
             }
         } else {
             Serial.println ( "Success!" );
