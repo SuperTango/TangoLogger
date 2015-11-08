@@ -1103,7 +1103,7 @@ void gatherAndLogData() {
         }
     } else {
         // Read data from Kelly KLS_S serial connection.
-        if ( klsController.readData() ) {
+        if ( klsController.processData() ) {
             throttleValueOD.value = klsController.throttlePercent;
             reverseSwitch = klsController.reverseSwitch;
             batteryVoltageOD.value = klsController.batteryVoltage;

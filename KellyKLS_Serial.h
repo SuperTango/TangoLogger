@@ -4,7 +4,8 @@
 #ifndef kellykls_serial__h
 #define kellykls_serial__h
 
-#define KLS8080I_LOGDATA_BUFSIZE 19
+#define KLS8080I_RECEIVE_BUFSIZE 19
+#define KLS8080I_SENDDATA_BUFSIZE 4
 #define REQUEST_TYPE_3A 0x3A
 #define REQUEST_TYPE_3B 0x3B
 
@@ -12,7 +13,7 @@ class KellyKLS_Serial {
   public:
     KellyKLS_Serial();
     void init ( Stream *controllerStream );
-    bool readData();
+    bool processData();
 
     float throttlePercent;
     bool reverseSwitch;
@@ -26,10 +27,11 @@ class KellyKLS_Serial {
   private:
     Stream *controllerStream;
     bool validateChecksum();
+    uint8_t receiveBufferIndex;
     unsigned long lastControllerRequestTime;
     uint8_t requestType;
-    uint8_t controllerBuffer[KLS8080I_LOGDATA_BUFSIZE+1];
-    uint8_t controllerBufferIndex;
-    uint8_t lastPrintedControllerBufferIndex;
+    uint8_t sendBuffer[KLS8080I_RECEIVE_BUFSIZE];
+    uint8_t receiveBuffer[KLS8080I_SENDDATA_BUFSIZE + 1];
+    //void dumpReceiveBuffer();
 };
 #endif //kellykls_serial__h

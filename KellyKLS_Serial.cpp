@@ -15,77 +15,79 @@ KellyKLS_Serial::KellyKLS_Serial() {
 void KellyKLS_Serial::init ( Stream *stream2 ) {
     //Serial.print ( "Initing KLS" );
     controllerStream = stream2;
+    memset ( receiveBuffer, 0, KLS8080I_RECEIVE_BUFSIZE );
+    receiveBufferIndex = 0;
 }
 
-bool KellyKLS_Serial::readData() {
+bool KellyKLS_Serial::processData() {
     if ( ( millis() - lastControllerRequestTime ) >= 300 ) {
         lastControllerRequestTime = millis();
-        //Serial.print ( lastControllerRequestTime, DEC );
-        //Serial.println (": About to make request" );
-        memset ( controllerBuffer, 0, KLS8080I_LOGDATA_BUFSIZE );
-        controllerBuffer[0] = requestType;
-        controllerBuffer[2] = requestType;
+        sendBuffer[0] = requestType;
+        sendBuffer[1] = 0x00;
+        sendBuffer[2] = requestType;
         if ( requestType == REQUEST_TYPE_3A ) {
             requestType = REQUEST_TYPE_3B;
         } else {
             requestType = REQUEST_TYPE_3A;
         }
-        controllerStream->write ( controllerBuffer, 3 );
-        controllerBufferIndex = 0;
-        lastPrintedControllerBufferIndex = 0;
-        memset ( controllerBuffer, 0, KLS8080I_LOGDATA_BUFSIZE );
+        controllerStream->write ( sendBuffer, 3 );
     }
 
-    //Serial.println ( controllerStream->available(), DEC );
     uint8_t byteRead;
-    while ( ( controllerStream->available() > 0 ) && ( controllerBufferIndex < KLS8080I_LOGDATA_BUFSIZE ) ) {
+    while ( ( controllerStream->available() > 0 ) && ( receiveBufferIndex < KLS8080I_RECEIVE_BUFSIZE ) ) {
         byteRead = (uint8_t)controllerStream->read() & 0xFF;
-        if ( controllerBufferIndex < KLS8080I_LOGDATA_BUFSIZE) {
-            controllerBuffer[controllerBufferIndex] = byteRead;
-            controllerBufferIndex++;
+        if ( ( receiveBufferIndex == 0 ) && ( byteRead != REQUEST_TYPE_3A ) && ( byteRead != REQUEST_TYPE_3B ) ) {
+            continue;
+        }
+        if ( ( receiveBufferIndex == 1 ) && ( byteRead != 0x10 ) ) {
+            receiveBufferIndex = 0;
+            continue;
+        }
+        if ( receiveBufferIndex < KLS8080I_RECEIVE_BUFSIZE) {
+            receiveBuffer[receiveBufferIndex] = byteRead;
+            receiveBufferIndex++;
         }
     }
-    if ( controllerBufferIndex > 0 && controllerBufferIndex > lastPrintedControllerBufferIndex ) {
-        //Serial.print ( millis(), DEC );
-        //Serial.print (": got data.  current index: " );
-        //Serial.println ( controllerBufferIndex, DEC );
-        lastPrintedControllerBufferIndex = controllerBufferIndex;
-    }
 
-    if ( controllerBufferIndex == KLS8080I_LOGDATA_BUFSIZE ) {
+    if ( receiveBufferIndex == KLS8080I_RECEIVE_BUFSIZE ) {
         if ( validateChecksum() ) {
-            //Serial.println ( "Checksum good!" );
-            if ( controllerBuffer[0] == REQUEST_TYPE_3A ) {
-                //Serial.println ( "Setting 3A Data" );
-                throttlePercent = ( controllerBuffer[2] - 1 ) / 255.0;
-                reverseSwitch = controllerBuffer[7];
-                batteryVoltage = controllerBuffer[11] * 1.0;
-                controllerTemp = controllerBuffer[13] * 1.0;
+            if ( receiveBuffer[0] == REQUEST_TYPE_3A ) {
+                throttlePercent = ( receiveBuffer[2] - 1 ) / 255.0;
+                reverseSwitch = receiveBuffer[7];
+                batteryVoltage = receiveBuffer[11] * 1.0;
+                controllerTemp = receiveBuffer[13] * 1.0;
                 last3APacketReceivedMillis = millis();
             } else {
-                //Serial.println ( "Setting 3B Data" );
-                rpm = controllerBuffer[4] << 8 | controllerBuffer[5];
-                motorCurrent = ( controllerBuffer[6] << 8 | controllerBuffer[7] ) * 0.1;
+                rpm = receiveBuffer[4] << 8 | receiveBuffer[5];
+                motorCurrent = ( receiveBuffer[6] << 8 | receiveBuffer[7] ) * 0.1;
                 last3BPacketReceivedMillis = millis();
             }
-            controllerBufferIndex = 0;
+            receiveBufferIndex = 0;
+            memset ( receiveBuffer, 0, KLS8080I_RECEIVE_BUFSIZE );
             return true;
         } else {
-            //Serial.println ( "Checksum bad!" );
+            receiveBufferIndex = 0;
+            memset ( receiveBuffer, 0, KLS8080I_RECEIVE_BUFSIZE );
         }
     }
     return false;
 }
 bool KellyKLS_Serial::validateChecksum() {
     uint16_t sum = 0;
-    for ( int i = 0; i < KLS8080I_LOGDATA_BUFSIZE - 1; i++ ) {
-        //Serial.print ( controllerBuffer[i], HEX );
-        //Serial.print ( " " );
-        sum += controllerBuffer[i];
+    for ( int i = 0; i < KLS8080I_RECEIVE_BUFSIZE - 1; i++ ) {
+        sum += receiveBuffer[i];
     }
-    //Serial.print( " Packet Checksum: " );
-    //Serial.print ( controllerBuffer[18], HEX );
-    //Serial.print( " Calculated: " );
-    //Serial.println ( ( sum & 0xFF ), HEX );
-    return ( ( sum & 0xFF ) == controllerBuffer[KLS8080I_LOGDATA_BUFSIZE - 1] );
+    return ( ( sum & 0xFF ) == receiveBuffer[KLS8080I_RECEIVE_BUFSIZE - 1] );
 }
+
+/*
+void KellyKLS_Serial::dumpReceiveBuffer() {
+    Serial.print ( receiveBufferIndex );
+    Serial.print ( ": " );
+    for ( int i = 0; i < KLS8080I_RECEIVE_BUFSIZE; i++ ) {
+        Serial.print ( receiveBuffer[i], HEX );
+        Serial.print ( " " );
+    }
+    Serial.println();
+}
+*/
