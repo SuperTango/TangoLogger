@@ -1342,7 +1342,8 @@ void updateDisplay_Normal() {
 
         lcdPrintFloat ( 1, 2, speed_GPS, 4, 1 );
         lcdPrintFloat ( 1, 9, speed_RPM, 4, 1 );
-        lcdPrintFloat ( 1, 16, speedOD.value, 4, 1 );
+        //lcdPrintFloat ( 1, 16, speedOD.value, 4, 1 );
+        lcdPrintFloat ( 1, 16, heatsinkTempOD.value, 4, 1 );
         if ( ! should_log ) {
             lcdPrintString_P ( 1, 19, 24 );
         }
