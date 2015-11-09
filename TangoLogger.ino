@@ -6,20 +6,18 @@
 #include <SdFat.h>
 #include <SdFatUtil.h>
 #include <TinyGPS.h>
-#include "mcp2515.h"
-#include "CanOpenLite.h"
 #include "EEPROM.h"
 #include <PString.h>
 #include "CrystalFontz635.h"
 #include <AltSoftSerial.h>
 #include "MotorController.h"
 #include "KellyKLS_Serial.h"
+#include "SevconGen4.h"
 
     // Wow, weird bug.  if I don't put the first function declaration here, the arduino IDE 
     // auto generator for function declaration fails.  weird.
 void printString_P ( Print &stream, int index );
 
-#define CANSPEED_1000 0
 #define MAX_BUFSIZE 30
 #define TIMEZONEOFFSET -8
 #define METERSTOMILES 0.000621371192
@@ -112,7 +110,6 @@ uint8_t lcd_clear_count = 20;
 CrystalFontz635 crystalFontz635;
 Packet *packet;
 
-CanOpenLite canOpenLite = CanOpenLite();
 unsigned short failed_cs;
 unsigned short failed_cs_last;
 unsigned short failed_cs_diff;
@@ -182,7 +179,7 @@ char buffer[MAX_BUFSIZE+1];
 PString bufferString((char*)buffer, sizeof(buffer));
 const char str00[] PROGMEM = "TangoLogger";
 const char str01[] PROGMEM = "RAM: ";
-const char str02[] PROGMEM = "CAN: ";
+const char str02[] PROGMEM = "Ctrlr init ok? ";
 const char str03[] PROGMEM = "OK";
 const char str04[] PROGMEM = "FAIL";
 const char str05[] PROGMEM = ",";
@@ -230,33 +227,6 @@ const char* const strings[] PROGMEM = { str00, str01, str02, str03, str04, str05
 
 bool gotGpsData = false;
 uint32_t loopsSinceLastLog = 0;
-SdoMessage sdoMsg;
-
-typedef struct {
-    uint16_t index;
-    uint8_t subIndex;
-    float scalingFactor;
-    float value;
-    unsigned long timeRequested;
-    unsigned long timeReceived;
-    char *description;
-} ObjectDictionaryEntry;
-
-ObjectDictionaryEntry throttleValueOD =         { 0x2620, 0x0, 0.0000305185094759972,   0, 0, 0, "tv" };
-ObjectDictionaryEntry batteryVoltageOD =        { 0x5100, 0x1, 0.0625,                  0, 0, 0, "bv" };
-ObjectDictionaryEntry batteryCurrentOD =        { 0x5100, 0x2, 0.0625,                  0, 0, 0, "bc" };
-ObjectDictionaryEntry motorVoltageOD =          { 0x4600, 0xD, 0.0625,                  0, 0, 0, "mv" };
-ObjectDictionaryEntry motorCurrentOD =          { 0x4600, 0xC, 1,                       0, 0, 0, "mc" };
-ObjectDictionaryEntry heatsinkTempOD =          { 0x5100, 0x4, 1,                       0, 0, 0, "ht" };
-ObjectDictionaryEntry motorTempControllerOD =   { 0x4600, 0x3, 1,                       0, 0, 0, "mt" };
-ObjectDictionaryEntry speedOD =                 { 0x2721, 0x0, 0.0625,                  0, 0, 0, "sp" };
-ObjectDictionaryEntry rpmOD =                   { 0x606c, 0x0, 1,                       0, 0, 0, "rpm" };
-ObjectDictionaryEntry bdiOD =                   { 0x2790, 0x1, 1,                       0, 0, 0, "bdi" };
-
-ObjectDictionaryEntry *idsToFetch[] = { &throttleValueOD, &batteryVoltageOD, &batteryCurrentOD, &motorVoltageOD, &motorCurrentOD, &heatsinkTempOD, &motorTempControllerOD, &speedOD, &rpmOD, NULL };
-
-tCAN request;
-tCAN response;
 
 typedef enum {
     PROGRAMSTATE_NORMAL,
@@ -296,6 +266,10 @@ void setup() {
         KellyKLS_Serial *klsController = new KellyKLS_Serial();
         klsController->init ( &controllerSerial );
         motorController = klsController;
+    } else {
+        SevconGen4 *sevconGen4 = new SevconGen4();
+        sevconGen4->init();
+        motorController = sevconGen4;
     }
     analogReference(DEFAULT); // not sure this is necessary anymore...
 
@@ -303,7 +277,6 @@ void setup() {
     printString_P ( Serial, 0 );
     updateDisplay_Init();
     printlnString_P ( Serial, 26 );  // Init OK!
-    rpmOD.value = 0; // set rpmOD to 0 since it's used to tell whether or not we should start logging
 
     pinMode ( WIFLY_RTS, OUTPUT );
     pinMode ( WIFLY_CTS, INPUT );
@@ -736,10 +709,10 @@ void processUserInput_Dialog ( Packet *packet ) {
  
 /* 01234567890123456789
   +--------------------+
-  |TangoLogger Init    |
-  |Ctrlr:  Kelly KLS_S |
-  |RAM: 1234 CAN: FAIL |
-  |LogFile: 234        |
+0 |TangoLogger Init    |
+1 |Ctrlr:  Kelly KLS_S |
+2 |Ctrlr Init ok? OK   | 
+3 |Log: 234 RAM: 1234  |
   +--------------------+
 */
 void updateDisplay_Init() {
@@ -753,21 +726,12 @@ void updateDisplay_Init() {
     }
     lcdPrintString_P ( 2, 0, 1 ); // "RAM: "
     lcdPrintInt ( 2, 5, FreeRam(), 0, DEC );
-    if ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) {
-        lcdPrintString_P ( 2, 11, 2 ); // "CAN: "
-        Serial.println ( "About to init CAN" );
-        if ( mcp2515_init(CANSPEED_1000) ) {
-            lcdPrintString_P ( 2, 11, 3 ); // OK
-        } else {
-            lcdPrintString_P ( 2, 11, 4 ); // FAIL
-        } 
-    }
-    lcdPrintString ( 2, 10, "Therm? " );
-    #ifdef MOTOR_THERMISTOR
-        lcdPrintString_P ( 2, 17, 38 ); // Yes
-    #else
-        lcdPrintString_P ( 2, 17, 39 ); // no
-    #endif
+    lcdPrintString_P ( 2, 0, 2 ); // "Ctrlr init ok?"
+    if ( motorController->initSuccess ) {
+        lcdPrintString_P ( 2, 15, 3 ); // OK
+    } else {
+        lcdPrintString_P ( 2, 15, 4 ); // FAIL
+    } 
 /*
     #ifdef __AVR_ATmega2560__
     lcdPrintString ( 3, 0, "Mega" );
@@ -1029,6 +993,7 @@ void gatherAndLogData() {
     currentMillis = millis();
     char gpsByte;
     gotGpsData = false;
+    //
 
         // get GPS Data
     while ( gpsSerial.available() ) {
@@ -1062,60 +1027,16 @@ void gatherAndLogData() {
         }
     }
 
-    if ( controllerType == CONTROLLER_TYPE_SEVCONGEN4 ) {
-            // Send CANOpen SDO requests for data if we haven't received or sent requests for it in a while.
-            // wait until the system has been up for at least 3 seconds before starting.
-        if ( currentMillis > 3000 ) {
-            uint8_t idCount;
-            for ( idCount = 0; idsToFetch[idCount] != NULL; idCount++ ) {
-                ObjectDictionaryEntry *entry = idsToFetch[idCount];
-                    // If we haven't sent a request for or received data for the entry in the last 600ms, 
-                    // send a new request for the data. 
-                if ( ( ( millis() - entry->timeReceived ) > 600 ) && ( ( millis() - entry->timeRequested ) > 600 ) ) {
-                    entry->timeRequested = millis();
-                    request.id = 0x601;
-                    request.header.rtr = 0;
-                    request.header.length = 8;
-                    sdoMsg.type = 2;
-                    sdoMsg.length = 0;
-                    sdoMsg.index = entry->index;
-                    sdoMsg.subIndex = entry->subIndex;
-                    sdoMsg.data = 0x0;
-                    canOpenLite.sdoMessageToBuffer ( &sdoMsg, request.data );
-                    mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
-                    mcp2515_send_message(&request);
-                }
-            }
-        }
-
-            // Read CANOpen SDO responses
-        while (mcp2515_check_message()) {
-            memset ( &response, 0, sizeof(tCAN));
-            if (mcp2515_get_message(&response)) {
-                if ( response.id == 0x581 ) {
-                    canOpenLite.sdoMessageFromBuffer ( &sdoMsg, response.data );
-                    for ( int i = 0; idsToFetch[i] != NULL ; i++ ) {
-                        ObjectDictionaryEntry *entry = idsToFetch[i];
-                        if ( ( sdoMsg.index == entry->index ) && ( sdoMsg.subIndex == entry->subIndex ) ) {
-                            //currentMillis = millis();
-                            entry->value = sdoMsg.data * entry->scalingFactor;
-                            entry->timeReceived = millis();
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // Read data from Kelly KLS_S serial connection.
-        if ( motorController->processData() ) {
-            throttleValueOD.value = motorController->throttlePercent;
-            motorDirection = motorController->direction;
-            batteryVoltageOD.value = motorController->batteryVoltage;
-            heatsinkTempOD.value = motorController->controllerTemp;;
-            rpmOD.value = motorController->rpm;
-            motorCurrentOD.value = motorController->motorCurrent;
-        }
+    // get and process data from motor controller, which is either the KellyKLS_Serial or SevconGen4.
+    if ( motorController->processData() ) {
+        /*
+        motorController->throttlePercent = motorController->throttlePercent;
+        motorDirection = motorController->direction;
+        motorController->batteryVoltage = motorController->batteryVoltage;
+        motorController->controllerTemp = motorController->controllerTemp;
+        motorController->rpm = motorController->rpm;
+        motorController->motorCurrent = motorController->motorCurrent;
+        */
     }
 
         // Read battery current from hall sensor, and average it since the readings are somewhat jumpy.
@@ -1150,11 +1071,11 @@ void gatherAndLogData() {
             distance_GPS = 0;
         }
 
-        if ( rpmOD.value > 1200 || rpmOD.value < -500 ) {
-            rpmOD.value = 0;
+        if ( motorController->rpm > 1200 || motorController->rpm < -500 ) {
+            motorController->rpm = 0;
         }
 
-        if ( ( should_log == false ) && ( rpmOD.value > 0 ) ) {
+        if ( ( should_log == false ) && ( motorController->rpm > 0 ) ) {
             should_log = true;
         }
 
@@ -1164,7 +1085,7 @@ void gatherAndLogData() {
 
         batteryCurrentAvg = convertBatteryCurrent ( batteryCurrentReadingAvg );
         batteryCurrentSingle = convertBatteryCurrent ( batteryCurrentReadingSingle );
-        batteryW = batteryCurrentAvg * batteryVoltageOD.value;
+        batteryW = batteryCurrentAvg * motorController->batteryVoltage;
         batteryWh = batteryW * millisSinceLastLog / MILLISPERHOUR;
         if ( batteryWh > 10 ) {
             batteryWh = 0;
@@ -1190,8 +1111,8 @@ void gatherAndLogData() {
              * Since that's too small a number for floating point on arduino to be precise, we use a
              * constant of 2.112632997 and then divide by 1E8 (100000000) later.
              */
-        speed_RPM = rpmOD.value * 0.076037879;
-        distance_RPM = rpmOD.value * millisSinceLastLog * 2.112632997; // remember to divide by 100000000 later!
+        speed_RPM = motorController->rpm * 0.076037879;
+        distance_RPM = motorController->rpm * millisSinceLastLog * 2.112632997; // remember to divide by 100000000 later!
         tripDistance_RPM += ( distance_RPM / 100000000 );
         if ( distance_GPS > 0 ) {
             whPerMile_GPS = batteryWh / distance_GPS;
@@ -1234,7 +1155,7 @@ void gatherAndLogData() {
             printInt ( *stream, fix_age, DEC );
             printFloat ( *stream, speed_GPS, 2 );
             printFloat ( *stream, speed_RPM, 2 );
-            printFloat ( *stream, speedOD.value, 2 );
+            printFloat ( *stream, motorController->speed, 2 );
             printFloat ( *stream, flat, 5 );
             printFloat ( *stream, flon, 5 );
             printFloat ( *stream, fcourse, 2 );
@@ -1242,30 +1163,30 @@ void gatherAndLogData() {
             printInt ( *stream, failed_cs_diff, DEC );
             printFloat ( *stream, distance_GPS, 5 );
             printFloat ( *stream, distance_RPM / 100000000, 5 );
-            printFloat ( *stream, rpmOD.value, 5 );
-            printFloat ( *stream, batteryVoltageOD.value, 3 );
+            printFloat ( *stream, motorController->rpm, 5 );
+            printFloat ( *stream, motorController->batteryVoltage, 3 );
             printFloat ( *stream, batteryCurrentReadingTotal, DEC );
             printFloat ( *stream, batteryCurrentAvg, 5 );
             printFloat ( *stream, batteryCurrentReadingSingle, DEC );
             printFloat ( *stream, batteryCurrentSingle, 5 );
-            printFloat ( *stream, batteryCurrentOD.value, 5 );
+            printFloat ( *stream, motorController->batteryCurrent, 5 );
             printFloat ( *stream, batteryWh, 5 );
             printFloat ( *stream, batteryWhTotal, 5 );
-            printFloat ( *stream, motorCurrentOD.value, 4 );
-            printFloat ( *stream, motorVoltageOD.value, 4 );
-            printFloat ( *stream, (motorCurrentOD.value * motorVoltageOD.value), 4 );
+            printFloat ( *stream, motorController->motorCurrent, 4 );
+            printFloat ( *stream, motorController->motorVoltage, 4 );
+            printFloat ( *stream, (motorController->motorCurrent * motorController->motorVoltage), 4 );
             printFloat ( *stream, whPerMile_GPS, 5 );
             printFloat ( *stream, whPerMile_RPM, 5 );
             printFloat ( *stream, whPerMile_Trip, 5 );
             printFloat ( *stream, milesPerKwh_GPS, 5 );
             printFloat ( *stream, milesPerKwh_RPM, 5 );
             printFloat ( *stream, milesPerKwh_Trip, 5 );
-            printFloat ( *stream, motorTempControllerOD.value, 4 );
+            printFloat ( *stream, motorController->motorTemp, 4 );
             printFloat ( *stream, c, 2 );
             printInt ( *stream, motorThermistorReading, DEC );
-            printFloat ( *stream, throttleValueOD.value, 4 );
-            printFloat ( *stream, bdiOD.value, 4 );
-            printFloat ( *stream, heatsinkTempOD.value, 4 );
+            printFloat ( *stream, motorController->throttlePercent, 4 );
+            printFloat ( *stream, motorController->bdi, 4 );
+            printFloat ( *stream, motorController->controllerTemp, 4 );
             printFloat ( *stream, motorDirection, DEC );
             KellyKLS_Serial *klsController = (KellyKLS_Serial *)motorController;
             printInt ( *stream, millis() - klsController->last3APacketReceivedMillis, DEC );
@@ -1332,8 +1253,8 @@ void updateDisplay_Normal() {
         dataChanged = false;
     }
 
-    lcdPrintFloat ( 0, 2, batteryVoltageOD.value, 5, 1 );
-    lcdPrintFloat ( 0, 7, ( batteryVoltageOD.value / 36 ), 5, 2 );
+    lcdPrintFloat ( 0, 2, motorController->batteryVoltage, 5, 1 );
+    lcdPrintFloat ( 0, 7, ( motorController->batteryVoltage / 36 ), 5, 2 );
 
     if ( batteryCurrentAvg <= -100 ) {
         batteryCurrentAvg = 0;
@@ -1348,26 +1269,26 @@ void updateDisplay_Normal() {
 
         lcdPrintFloat ( 1, 2, speed_GPS, 4, 1 );
         lcdPrintFloat ( 1, 9, speed_RPM, 4, 1 );
-        //lcdPrintFloat ( 1, 16, speedOD.value, 4, 1 );
-        lcdPrintFloat ( 1, 16, heatsinkTempOD.value, 4, 1 );
+        //lcdPrintFloat ( 1, 16, motorController->speed, 4, 1 );
+        lcdPrintFloat ( 1, 16, motorController->controllerTemp, 4, 1 );
         if ( ! should_log ) {
             lcdPrintString_P ( 1, 19, 24 );
         }
 
         lcdPrintFloat ( 2, 3, milesPerKwh_RPM, 5, 2 );
         lcdPrintFloat ( 2, 9, milesPerKwh_Trip, 5, 2 );
-        //lcdPrintInt ( 2, 17, motorTempControllerOD.value, 3, DEC );
+        //lcdPrintInt ( 2, 17, motorController->motorTemp, 3, DEC );
         lcdPrintInt ( 2, 17, c, 3, DEC );
 
         lcdPrintFloat ( 3, 2, tripDistance_RPM, 4, 1 );
         lcdPrintInt ( 3, 10, int ( batteryWhTotal ), 4, DEC );
     } else {
-        lcdPrintFloat ( 1, 2, motorVoltageOD.value, 5, 1 );
-        lcdPrintFloat ( 1, 10, motorCurrentOD.value, 5, 1 );
-        if ( bdiOD.value >= 100 ) {
+        lcdPrintFloat ( 1, 2, motorController->motorVoltage, 5, 1 );
+        lcdPrintFloat ( 1, 10, motorController->motorCurrent, 5, 1 );
+        if ( motorController->bdi >= 100 ) {
             lcdPrintString_P ( 1, 16, 12 );
         } else {
-            lcdPrintInt ( 1, 17, (long) bdiOD.value, 3, DEC );
+            lcdPrintInt ( 1, 17, (long) motorController->bdi, 3, DEC );
         }
     }
     int tzHour = hour + TIMEZONEOFFSET;
