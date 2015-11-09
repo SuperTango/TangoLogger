@@ -12,6 +12,7 @@
 #include <PString.h>
 #include "CrystalFontz635.h"
 #include <AltSoftSerial.h>
+#include "MotorController.h"
 #include "KellyKLS_Serial.h"
 
     // Wow, weird bug.  if I don't put the first function declaration here, the arduino IDE 
@@ -97,8 +98,8 @@ SdFile readFile;
 SdFile uploadFile;
 
 // Kelly KLS_Serial
-KellyKLS_Serial klsController;
-bool reverseSwitch;
+MotorController *motorController;
+float motorDirection;
 
 //Print *stream = &Serial;
 Print *stream = &logFile;
@@ -291,7 +292,11 @@ void setup() {
         controllerSerial.begin( 19200 );
     }
     crystalFontz635.init ( &lcdSerial );
-    klsController.init ( &controllerSerial );
+    if ( controllerType == CONTROLLER_TYPE_KLS_S ) {
+        KellyKLS_Serial *klsController = new KellyKLS_Serial();
+        klsController->init ( &controllerSerial );
+        motorController = klsController;
+    }
     analogReference(DEFAULT); // not sure this is necessary anymore...
 
     updateDisplayWithNewParams(); // Ensure brightness and contrast are setup correctly upon start.
@@ -1103,13 +1108,13 @@ void gatherAndLogData() {
         }
     } else {
         // Read data from Kelly KLS_S serial connection.
-        if ( klsController.processData() ) {
-            throttleValueOD.value = klsController.throttlePercent;
-            reverseSwitch = klsController.reverseSwitch;
-            batteryVoltageOD.value = klsController.batteryVoltage;
-            heatsinkTempOD.value = klsController.controllerTemp;;
-            rpmOD.value = klsController.rpm;
-            motorCurrentOD.value = klsController.motorCurrent;
+        if ( motorController->processData() ) {
+            throttleValueOD.value = motorController->throttlePercent;
+            motorDirection = motorController->direction;
+            batteryVoltageOD.value = motorController->batteryVoltage;
+            heatsinkTempOD.value = motorController->controllerTemp;;
+            rpmOD.value = motorController->rpm;
+            motorCurrentOD.value = motorController->motorCurrent;
         }
     }
 
@@ -1261,9 +1266,10 @@ void gatherAndLogData() {
             printFloat ( *stream, throttleValueOD.value, 4 );
             printFloat ( *stream, bdiOD.value, 4 );
             printFloat ( *stream, heatsinkTempOD.value, 4 );
-            printFloat ( *stream, reverseSwitch, DEC );
-            printInt ( *stream, millis() - klsController.last3APacketReceivedMillis, DEC );
-            printInt ( *stream, millis() - klsController.last3BPacketReceivedMillis, DEC );
+            printFloat ( *stream, motorDirection, DEC );
+            KellyKLS_Serial *klsController = (KellyKLS_Serial *)motorController;
+            printInt ( *stream, millis() - klsController->last3APacketReceivedMillis, DEC );
+            printInt ( *stream, millis() - klsController->last3BPacketReceivedMillis, DEC );
             printLine ( *stream );
         }
 

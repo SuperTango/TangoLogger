@@ -13,6 +13,7 @@ KellyKLS_Serial::KellyKLS_Serial() {
 }
 
 void KellyKLS_Serial::init ( Stream *stream2 ) {
+    MotorController::init();
     //Serial.print ( "Initing KLS" );
     controllerStream = stream2;
     memset ( receiveBuffer, 0, KLS8080I_RECEIVE_BUFSIZE );
@@ -53,7 +54,7 @@ bool KellyKLS_Serial::processData() {
         if ( validateChecksum() ) {
             if ( receiveBuffer[0] == REQUEST_TYPE_3A ) {
                 throttlePercent = ( receiveBuffer[2] - 1 ) / 255.0;
-                reverseSwitch = receiveBuffer[7];
+                direction = ( receiveBuffer[7] ) ? -1 : 1;
                 batteryVoltage = receiveBuffer[11] * 1.0;
                 controllerTemp = receiveBuffer[13] * 1.0;
                 last3APacketReceivedMillis = millis();
@@ -72,6 +73,7 @@ bool KellyKLS_Serial::processData() {
     }
     return false;
 }
+
 bool KellyKLS_Serial::validateChecksum() {
     uint16_t sum = 0;
     for ( int i = 0; i < KLS8080I_RECEIVE_BUFSIZE - 1; i++ ) {
