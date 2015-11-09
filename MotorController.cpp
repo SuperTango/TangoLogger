@@ -23,4 +23,6 @@ void MotorController::init() {
     rpm = 0.0;
     direction = 1;
     bdi = 0.0;
+    speed = 0.0;
+    initSuccess = false;
 }

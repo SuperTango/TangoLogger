@@ -10,6 +10,7 @@ class MotorController {
     virtual bool processData() = 0;
     void init();
 
+    bool initSuccess;
     float throttlePercent;
     float batteryVoltage;
     float batteryCurrent;
@@ -18,8 +19,8 @@ class MotorController {
     float controllerTemp;
     float motorTemp;
     float rpm;
+    float speed;
     int8_t direction;
     float bdi;
-
 };
 #endif //motor_controller__h

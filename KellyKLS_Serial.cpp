@@ -18,6 +18,7 @@ void KellyKLS_Serial::init ( Stream *stream2 ) {
     controllerStream = stream2;
     memset ( receiveBuffer, 0, KLS8080I_RECEIVE_BUFSIZE );
     receiveBufferIndex = 0;
+    initSuccess = true;
 }
 
 bool KellyKLS_Serial::processData() {
