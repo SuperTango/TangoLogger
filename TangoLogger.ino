@@ -97,7 +97,7 @@ SdFile uploadFile;
 
 // Kelly KLS_Serial
 MotorController *motorController;
-float motorDirection;
+int8_t motorDirection;
 
 //Print *stream = &Serial;
 Print *stream = &logFile;
@@ -204,7 +204,7 @@ const char str23[] PROGMEM = "R:";
 const char str24[] PROGMEM = "!";
 const char str25[] PROGMEM = "I:";
 const char str26[] PROGMEM = "Init OK!";
-const char str27[] PROGMEM = "#LOGFMT 8 ";
+const char str27[] PROGMEM = "#LOGFMT 10 ";
 const char str28[] PROGMEM = " ";
 const char str29[] PROGMEM = { 0x10, 0x0 }; // arrow (for menu)
 const char str30[] PROGMEM = "Contrast";
@@ -260,9 +260,6 @@ void setup() {
     gpsSerial.begin(GPSRATE);
     if ( controllerType == CONTROLLER_TYPE_KLS_S ) {
         controllerSerial.begin( 19200 );
-    }
-    crystalFontz635.init ( &lcdSerial );
-    if ( controllerType == CONTROLLER_TYPE_KLS_S ) {
         KellyKLS_Serial *klsController = new KellyKLS_Serial();
         klsController->init ( &controllerSerial );
         motorController = klsController;
@@ -271,6 +268,7 @@ void setup() {
         sevconGen4->init();
         motorController = sevconGen4;
     }
+    crystalFontz635.init ( &lcdSerial );
     analogReference(DEFAULT); // not sure this is necessary anymore...
 
     updateDisplayWithNewParams(); // Ensure brightness and contrast are setup correctly upon start.
@@ -1029,9 +1027,9 @@ void gatherAndLogData() {
 
     // get and process data from motor controller, which is either the KellyKLS_Serial or SevconGen4.
     if ( motorController->processData() ) {
+        motorDirection = motorController->direction;
         /*
         motorController->throttlePercent = motorController->throttlePercent;
-        motorDirection = motorController->direction;
         motorController->batteryVoltage = motorController->batteryVoltage;
         motorController->controllerTemp = motorController->controllerTemp;
         motorController->rpm = motorController->rpm;
@@ -1148,14 +1146,14 @@ void gatherAndLogData() {
         if ( should_log ) {
             printLong ( *stream, currentMillis, DEC );
             printFloat ( *stream, (float)currentMillis * ARDUINO_MILLIS_COMPENSATION_FACTOR, 4 );
-            printInt ( *stream, diff_gps_time, DEC );
+            //printInt ( *stream, diff_gps_time, DEC );
             printLong ( *stream, loopsSinceLastLog, DEC );
             printIntLeadingZero ( *stream, year ); printIntLeadingZero ( *stream, month ); printIntLeadingZero ( *stream, day ); printString_P ( *stream, 5 );
             printIntLeadingZero ( *stream, hour ); printIntLeadingZero ( *stream, minute ); printIntLeadingZero ( *stream, second ); printString_P ( *stream, 5 );
             printInt ( *stream, fix_age, DEC );
             printFloat ( *stream, speed_GPS, 2 );
             printFloat ( *stream, speed_RPM, 2 );
-            printFloat ( *stream, motorController->speed, 2 );
+            //printFloat ( *stream, motorController->speed, 2 );
             printFloat ( *stream, flat, 5 );
             printFloat ( *stream, flon, 5 );
             printFloat ( *stream, fcourse, 2 );
@@ -1165,7 +1163,7 @@ void gatherAndLogData() {
             printFloat ( *stream, distance_RPM / 100000000, 5 );
             printFloat ( *stream, motorController->rpm, 5 );
             printFloat ( *stream, motorController->batteryVoltage, 3 );
-            printFloat ( *stream, batteryCurrentReadingTotal, DEC );
+            //printFloat ( *stream, batteryCurrentReadingTotal, DEC );
             printFloat ( *stream, batteryCurrentAvg, 5 );
             printFloat ( *stream, batteryCurrentReadingSingle, DEC );
             printFloat ( *stream, batteryCurrentSingle, 5 );
@@ -1185,9 +1183,9 @@ void gatherAndLogData() {
             printFloat ( *stream, c, 2 );
             printInt ( *stream, motorThermistorReading, DEC );
             printFloat ( *stream, motorController->throttlePercent, 4 );
-            printFloat ( *stream, motorController->bdi, 4 );
+            //printFloat ( *stream, motorController->bdi, 4 );
             printFloat ( *stream, motorController->controllerTemp, 4 );
-            printFloat ( *stream, motorDirection, DEC );
+            printInt ( *stream, motorDirection, DEC );
             KellyKLS_Serial *klsController = (KellyKLS_Serial *)motorController;
             printInt ( *stream, millis() - klsController->last3APacketReceivedMillis, DEC );
             printInt ( *stream, millis() - klsController->last3BPacketReceivedMillis, DEC );
