@@ -3,6 +3,7 @@
      */
 #define MOTOR_THERMISTOR
 
+#include <FileIO.h>
 #include <SdFat.h>
 #include <SdFatUtil.h>
 #include <TinyGPS.h>
@@ -99,6 +100,12 @@ SdFile uploadFile;
 MotorController *motorController;
 int8_t motorDirection;
 
+// Bridge stuff
+bool bridgeInited = false;
+unsigned long lastBridgeCheck = 0;
+Process uploadProcess;
+bool uploadStarted = false;
+
 //Print *stream = &Serial;
 Print *stream = &logFile;
 bool logFiles_open = false;
@@ -175,6 +182,11 @@ uint16_t file_num = 0;
 
 uint8_t buf_index;
 char *buf_ptr;
+char logFileName[39];
+char logStringBuffer[512];
+PString logString(logStringBuffer, sizeof(logStringBuffer));
+
+char bridgeBuffer[10];
 char buffer[MAX_BUFSIZE+1];
 PString bufferString((char*)buffer, sizeof(buffer));
 const char str00[] PROGMEM = "TangoLogger";
@@ -219,11 +231,13 @@ const char str38[] PROGMEM = "YES";
 const char str39[] PROGMEM = "NO";
 const char str40[] PROGMEM = "Ctrlr:";
 const char str41[] PROGMEM = "SD Init Fail";
+const char str42[] PROGMEM = "/mnt/sda1/TangoLoggerData/00000-LG.CSV";
+const char str43[] PROGMEM = "Initializing Bridge";
 const char* const strings[] PROGMEM = { str00, str01, str02, str03, str04, str05, str06, str07, str08, str09, 
                                     str10, str11, str12, str13, str14, str15, str16, str17, str18, str19,  
                                     str20, str21, str22, str23, str24, str25, str26, str27, str28, str29,
                                     str30, str31, str32, str33, str34, str35, str36, str37, str38, str39,
-                                    str40, str41 };
+                                    str40, str41, str42, str43 };
 
 bool gotGpsData = false;
 uint32_t loopsSinceLastLog = 0;
@@ -253,10 +267,11 @@ unsigned long lastBmsTrippedTime;
 
 SdBaseFile rootFile;
 void setup() {
-    controllerType = ( EEPROM.read ( EEPROM_CONTROLLER_TYPE ) > CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS_S : EEPROM.read ( EEPROM_CONTROLLER_TYPE );
     Serial.begin( 115200 );
+
+    controllerType = ( EEPROM.read ( EEPROM_CONTROLLER_TYPE ) > CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS_S : EEPROM.read ( EEPROM_CONTROLLER_TYPE );
     lcdSerial.begin( 115200 );
-    wiflySerial.begin( 115200 );
+    //wiflySerial.begin( 115200 );
     gpsSerial.begin(GPSRATE);
     if ( controllerType == CONTROLLER_TYPE_KLS_S ) {
         controllerSerial.begin( 19200 );
@@ -270,6 +285,7 @@ void setup() {
     }
     crystalFontz635.init ( &lcdSerial );
     analogReference(DEFAULT); // not sure this is necessary anymore...
+    setLedBooleanRed ( 0, true );
 
     updateDisplayWithNewParams(); // Ensure brightness and contrast are setup correctly upon start.
     printString_P ( Serial, 0 );
@@ -655,10 +671,28 @@ void updateDisplay() {
 
     }
 
+    if ( ( bridgeInited ) && ( millis() - lastBridgeCheck > 500 ) ) {
+        lastBridgeCheck = millis();
+        Bridge.get("is_uploading",bridgeBuffer,10);
+        if ( bridgeBuffer[0] == 'Y' ) {
+            setLedBooleanYellow ( 2, true );
+        } else {
+            setLedBooleanYellow ( 2, false );
+            uploadStarted = false;
+        }
+            while (uploadProcess.available()>0) {
+                char c = uploadProcess.read();
+                Serial.print(c);
+            }
+            Serial.flush();
+    }
+
+/*
     if ( digitalRead ( WIFLY_TCP_CONNECTED ) != lastWiflyTcpConnected ) {
         lastWiflyTcpConnected = !lastWiflyTcpConnected;
         setLedBooleanGreen ( 0, lastWiflyTcpConnected );
     }
+*/
 
     if ( wiflyWebConnect != lastWiflyWebConnect ) {
         lastWiflyWebConnect = wiflyWebConnect;
@@ -903,14 +937,23 @@ void processUserInput_Menu ( Packet *packet ) {
                 displayParamsChanged = true;
             }
         }
+        /*
     } else if ( ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) ||
                 ( CFA635_KEY_ENTER_PRESS == packet->data[0] && currentMenuItem == 3 ) ) {
         programState = PROGRAMSTATE_NORMAL;
         currentMenuItem = 0;
         stateChanged = true;
-    } else if ( CFA635_KEY_ENTER_PRESS == packet->data[0] && currentMenuItem == 2 ) {
+        */
+
+    } else if ( CFA635_KEY_ENTER_PRESS == packet->data[0] && currentMenuItem == 3 ) {
         Serial.println ( "Setting ProgramState to upload and stateChanged to true" );
-        programState = PROGRAMSTATE_UPLOAD;
+        initBridge();
+        Serial.println ( "ABout to call curl" );
+        uploadProcess.begin("/mnt/sda1/TangoLoggerUploader/upload.py");      
+        uploadProcess.runAsynchronously();
+        uploadStarted = true;
+
+        programState = PROGRAMSTATE_NORMAL;
         currentMenuItem = 0;
         stateChanged = true;
     }
@@ -943,7 +986,6 @@ void processUserInput_Upload ( Packet *packet ) {
         Serial.println( "Setting WIFLY_WEB_CONNECT to LOW 3" );
         setWiflyWebConnect ( LOW );
         stateChanged = true;
-
     }
 }
 
@@ -1144,6 +1186,9 @@ void gatherAndLogData() {
 #endif // MOTOR_THERMISTOR  29840
 
         if ( should_log ) {
+            File dataFile = FileSystem.open(logFileName, FILE_APPEND);
+            stream = &logString;
+            logString.begin();
             printLong ( *stream, currentMillis, DEC );
             printFloat ( *stream, (float)currentMillis * ARDUINO_MILLIS_COMPENSATION_FACTOR, 4 );
             //printInt ( *stream, diff_gps_time, DEC );
@@ -1189,7 +1234,10 @@ void gatherAndLogData() {
             KellyKLS_Serial *klsController = (KellyKLS_Serial *)motorController;
             printInt ( *stream, millis() - klsController->last3APacketReceivedMillis, DEC );
             printInt ( *stream, millis() - klsController->last3BPacketReceivedMillis, DEC );
-            printLine ( *stream );
+            //printLine ( *stream );
+            dataFile.println(logString);
+            dataFile.close();
+            //Serial.println(logString);
         }
 
             // reset distance_GPS in case we do another round before getting another
@@ -1433,7 +1481,7 @@ void init_logger() {
     // if SD chip select is not SS, the second argument to init is CS pin number
     bool success = false;
     int i = 0;
-    while ( ( success == false ) && ( i < 5 ) ) {
+    while ( ( success == false ) && ( i < 2 ) ) {
         Serial.print ( "attempting SD Init: " );
         Serial.println ( i, DEC );
         if (! sd.begin(SD_CHIP_SELECT, SPI_HALF_SPEED)) {
@@ -1464,6 +1512,13 @@ void create_filename ( uint16_t num ) {
     buffer[2] = num % 1000 / 100 + '0';
     buffer[3] = num % 100 / 10 + '0';
     buffer[4] = num % 10 + '0';
+
+    strcpy_P ( logFileName, (char*)pgm_read_word ( &(strings[42]) ) ); // base filename
+    logFileName[26] = num / 10000 + '0';
+    logFileName[27] = num % 10000 / 1000 + '0';
+    logFileName[28] = num % 1000 / 100 + '0';
+    logFileName[29] = num % 100 / 10 + '0';
+    logFileName[30] = num % 10 + '0';
 }
 
 void open_logFiles() {
@@ -1487,7 +1542,31 @@ void open_logFiles() {
     printString_P ( *stream, 27 ); // Output Format type
     printFloat ( *stream, ARDUINO_MILLIS_COMPENSATION_FACTOR, 6 ); // include ardunio millis compensation for later analysis.
     printLine ( *stream );
+
+    // we're telling the user that we're initializing the bridge b/c it could take some time.
+    initBridge();
+    Serial.println ( "About to open File on Bridge" );
+    Serial.print ( "Got Log file name: " );
+    Serial.println ( logFileName );
+    File dataFile = FileSystem.open(logFileName, FILE_APPEND);
+    dataFile.println ( "#LOGFMT 10 1.001884" );
+    dataFile.close();
 }
+
+void initBridge() {
+    if ( bridgeInited == false ) {
+        Serial.println ( "About to call bridge.begin()" );
+        crystalFontz635.clearLCD();
+        printString_P ( *stream, 43 ); // initializing Bridge
+        lcdPrintString_P ( 1, 0, 43 ); // TangoLogger Init
+        Bridge.begin();
+        FileSystem.begin();
+        dataChanged = true;
+        bridgeInited = true;
+        setLedBooleanGreen ( 0, true );
+    }
+}
+
 
 void setWiflyWebConnect ( boolean value ) {
     wiflyWebConnect = value;
