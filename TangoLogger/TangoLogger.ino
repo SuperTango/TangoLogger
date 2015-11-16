@@ -52,15 +52,6 @@ void printString_P ( Print &stream, int index );
 //#define CAN_INT                       2
 // #define GPS_RX_LED                   4
 // #define GPS_TX_LED                   5
-#define WIFLY_CTS                       A2 // Arduino CTS, WiFly RTS, input (from arduino), read this to see if it's ok to send data (HIGH indicates RX buffer full)
-#define WIFLY_RTS                       A1 // Arduino RTS, WiFly CTS, output (from arduino), set to LOW to enable wifly to send data to arduino.  set to HIGH to disable.
-#define WIFLY_TCP_CONNECTED             A3 // From WiFly. tells us when connected to AP.
-#define WIFLY_WEB_CONNECT               A0 // To WiFly to tell it to open connection to remote host stored in config
-#define WIFLY_WEB_CONNECTED             A4 // From WiFly. tells us when web connection has been opened.  ok to send data.
-bool lastWiflyTcpConnected = false;
-bool wiflyWebConnect = false;
-bool lastWiflyWebConnect = false;
-bool lastWiflyWebConnected = false;
 
 #define BMS_BUZZER_INPUT                6
 
@@ -86,31 +77,35 @@ bool lastWiflyWebConnected = false;
 
 #define lcdSerial Serial1
 #define gpsSerial Serial3
-#define wiflySerial Serial2
 AltSoftSerial controllerSerial;
 
-// File logging
+    // Local SD File logging
 SdFat sd;
 SdFile logFile;
 SdFile nmeaFile;
-SdFile readFile;
-SdFile uploadFile;
 
-// Kelly KLS_Serial
+    // For linux side logfile stuff.
+char linuxLogfileName[39];
+char logStringBuffer[512];
+PString logString(logStringBuffer, sizeof(logStringBuffer));
+uint16_t file_num = 0;
+
+
+    // Kelly KLS_Serial
 MotorController *motorController;
 int8_t motorDirection;
 
-// Bridge stuff
+    // Bridge stuff
 bool bridgeInited = false;
 unsigned long lastBridgeCheck = 0;
 Process uploadProcess;
 bool uploadStarted = false;
+char bridgeBuffer[10];
 
 //Print *stream = &Serial;
 Print *stream = &logFile;
 bool logFiles_open = false;
 bool should_log = false;
-bool log_ok = false;
 
 uint8_t lcd_clear_count = 20;
 
@@ -121,9 +116,7 @@ unsigned short failed_cs;
 unsigned short failed_cs_last;
 unsigned short failed_cs_diff;
 
-    /*
-     * stuff for time keeping
-     */
+    // stuff for time keeping
 int year;
 uint8_t month, day, hour, minute, second;
 unsigned long cur_gps_time;
@@ -136,9 +129,7 @@ unsigned long lastDisplayMillis = 0;
 unsigned long lastLogMillis = 0;
 float millisSinceLastLog = 0;
 
-/*
- * Vars needed by tinyGPS
- */
+    // Vars needed by tinyGPS
 TinyGPS gps;
 long lat, lon;
 unsigned long fix_age, course;
@@ -178,15 +169,6 @@ float batteryCurrentSingle;
 
 float batteryW = 0;
 
-uint16_t file_num = 0;
-
-uint8_t buf_index;
-char *buf_ptr;
-char logFileName[39];
-char logStringBuffer[512];
-PString logString(logStringBuffer, sizeof(logStringBuffer));
-
-char bridgeBuffer[10];
 char buffer[MAX_BUFSIZE+1];
 PString bufferString((char*)buffer, sizeof(buffer));
 const char str00[] PROGMEM = "TangoLogger";
@@ -245,9 +227,6 @@ uint32_t loopsSinceLastLog = 0;
 typedef enum {
     PROGRAMSTATE_NORMAL,
     PROGRAMSTATE_MENU,
-    PROGRAMSTATE_UPLOAD,
-    PROGRAMSTATE_WIFLYDIRECT,
-    PROGRAMSTATE_DIALOG
 } ProgramState;
 
 ProgramState programState = PROGRAMSTATE_NORMAL;
@@ -259,19 +238,16 @@ uint8_t normalDisplayPage = 0;
 uint8_t brightness;             // from 0-5 (display valid range 0-100)
 uint8_t contrast;               // from 1-5 (display valid range 0-255, but docs say: "0-65 = very light, 66 = light, 95 = about right, 125 = dark, 126-255 = very dark
 uint8_t currentMenuItem = 0;
-byte byteRead;
 
 bool bmsTripped = false;
 bool lastBmsTripped = false;
 unsigned long lastBmsTrippedTime;
 
-SdBaseFile rootFile;
 void setup() {
     Serial.begin( 115200 );
 
     controllerType = ( EEPROM.read ( EEPROM_CONTROLLER_TYPE ) > CONTROLLER_TYPE_SEVCONGEN4 ) ? CONTROLLER_TYPE_KLS_S : EEPROM.read ( EEPROM_CONTROLLER_TYPE );
     lcdSerial.begin( 115200 );
-    //wiflySerial.begin( 115200 );
     gpsSerial.begin(GPSRATE);
     if ( controllerType == CONTROLLER_TYPE_KLS_S ) {
         controllerSerial.begin( 19200 );
@@ -292,17 +268,7 @@ void setup() {
     updateDisplay_Init();
     printlnString_P ( Serial, 26 );  // Init OK!
 
-    pinMode ( WIFLY_RTS, OUTPUT );
-    pinMode ( WIFLY_CTS, INPUT );
     pinMode ( BMS_BUZZER_INPUT, INPUT_PULLUP );
-    digitalWrite ( WIFLY_RTS, LOW );
-    pinMode ( WIFLY_TCP_CONNECTED, INPUT );
-    pinMode ( WIFLY_WEB_CONNECTED, INPUT );
-    pinMode ( WIFLY_WEB_CONNECT, OUTPUT );
-    Serial.println( "Setting WIFLY_WEB_CONNECT to LOW SETUP" );
-    wiflyWebConnect = LOW;
-    setWiflyWebConnect ( LOW );
-    rootFile.openRoot ( sd.vol() );
 }
 
 /*
@@ -322,315 +288,12 @@ void loop() {
         updateDisplayWithNewParams();
     }
 
-    if ( ( programState != PROGRAMSTATE_UPLOAD ) && ( programState != PROGRAMSTATE_WIFLYDIRECT ) ) {
-        gatherAndLogData();
-    }
-
-    if ( programState == PROGRAMSTATE_UPLOAD ) {
-        loop_Upload();
-
-    } else if ( programState == PROGRAMSTATE_WIFLYDIRECT ) {
-        loop_WiflyDirect();
-
-    }
+    gatherAndLogData();
 
     updateDisplay();
     stateChanged = false;
     dataChanged = false;
     displayParamsChanged = false;
-}
-
-typedef enum {
-    UPLOADSTATE_BEGIN,
-    UPLOADSTATE_FINDFILES,
-    UPLOADSTATE_OPENINGFILE,
-    UPLOADSTATE_SENDINGDATA,
-    UPLOADSTATE_WAITING_FOR_SERVER_RESPONSE,
-} UploadState;
-
-UploadState uploadState = UPLOADSTATE_BEGIN;
-dir_t dir;
-uint16_t filesToUploadCount = 0;
-uint16_t currentFileNumber = 0;
-
-bool wiflyIsConnectionOpen = false;
-bool wiflyInCommandMode = false;
-char *stringToLookFor = NULL;
-unsigned long start;
-unsigned long startWaitingForResponseTime;
-
-bool issueWiFlyCommand ( char *cmd, char *expectedResponse ) {
-    bool found = false;
-    strrev ( expectedResponse );
-    writeWiFlySerial ( cmd );
-    memset ( buffer, 0, MAX_BUFSIZE );
-    start = millis();
-
-    while ( ( millis() - start ) < 3000 ) {
-        while ( wiflySerial.available() ) {
-            byteRead = wiflySerial.read();
-            Serial.write ( byteRead );
-            memmove ( buffer + 1, buffer, MAX_BUFSIZE - 1 );
-            buffer[MAX_BUFSIZE-1] = NULL;
-            if ( byteRead == '\r' || byteRead == '\n' ) {
-                buffer[0] = '|';
-            } else {
-                buffer[0] = byteRead;
-            }
-            if ( ! strncmp ( buffer, expectedResponse, strlen ( expectedResponse ) ) ) {
-                strrev ( expectedResponse );
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-void convertUploadFilename ( char *name, char *buf, bool eightDotThree) {
-    uint8_t index = 8;
-    memcpy ( buffer, name, 11 );
-    if ( eightDotThree ) {
-        buffer[index++] = '.';
-    }
-    buffer[index++] = 'U';
-    buffer[index++] = 'P';
-    buffer[index++] = 'L';
-    buffer[index++] = NULL;
-}
-
-bool shouldUploadFile ( uint8_t name[] ) {
-    //return ( ! ( strncmp ( (char *)name, "00021-NMGPS", 11 ) ) );
-    if ( ( ! strncmp ( (char *)&name[5], "-NMGPS", 6 ) ) ||
-         ( ! strncmp ( (char *)&name[5], "-LGCSV", 6 ) ) ) {
-        convertUploadFilename ( (char *)name, buffer, true );
-        return ! rootFile.exists ( buffer );
-    }
-    return false;
-}
-
-uint32_t bytesRead = 0;
-uint32_t totalBytesRead = 0;
-unsigned long fileStartTime;
-
-bool getNextFileToUpload ( SdBaseFile *directory ) {
-    while ( directory->readDir ( &dir ) == sizeof ( dir ) ) {
-        Serial.print ( "name: " );
-        Serial.print ( (char *)dir.name );
-        Serial.print ( ", size: " );
-        Serial.print ( dir.fileSize, DEC );
-        Serial.print ( ", should upload? " );
-        if ( shouldUploadFile ( dir.name ) ) {
-            Serial.println ( "yes" );
-            return true;
-        }  else {
-            Serial.println ( "no" );
-        }
-    }
-    return false;
-}
-
-void deleteAllUploadFiles() {
-    sd.vwd()->rewind();
-    while ( sd.vwd()->readDir ( &dir ) == sizeof ( dir ) ) {
-        if ( ! strncmp ( (char *)&dir.name[8], "UPL", 3 ) ) {
-            SdFile::dirName(dir, buffer);
-            Serial.print ( "Removing file: " );
-            Serial.println ( buffer );
-            SdBaseFile::remove ( &rootFile, (char *)buffer );
-        }
-    }
-}
-
-void loop_Upload() {
-    // close file (if open)
-    // get list of files
-    // 
-    // get file info
-    // write $$$
-    // write open
-    // write data
-    // write $$$ ???
-    // write "close" ???
-    uint32_t length;
-    bool gotIt = false;
-    bool open_success = false;
-    int8_t readDirResponse;
-
-    if ( stateChanged )  {
-        uploadState = UPLOADSTATE_BEGIN;
-        stringToLookFor = "*NEPO*";
-        filesToUploadCount = 0;
-        currentFileNumber = 0;
-        uploadState = UPLOADSTATE_FINDFILES;
-        sd.vwd()->rewind();
-        while ( getNextFileToUpload ( sd.vwd() ) ) {
-            filesToUploadCount++;
-        }
-        Serial.print ( "Files to upload: " );
-        Serial.println ( filesToUploadCount, DEC );
-        nmeaFile.close();
-        logFile.close();
-        should_log = false;
-
-        digitalWrite ( WIFLY_RTS, HIGH );
-        delayMicroseconds ( 1 );
-        digitalWrite ( WIFLY_RTS, LOW );
-        Serial.println ( "Toggling RTS" );
-    }
-
-    if ( uploadState == UPLOADSTATE_FINDFILES ) {
-        if ( filesToUploadCount > currentFileNumber ) {
-            uploadState = UPLOADSTATE_OPENINGFILE;
-            sd.vwd()->rewind();
-            getNextFileToUpload ( sd.vwd() );
-        } else {
-            programState = PROGRAMSTATE_NORMAL;
-            stateChanged = true;
-        }
-    }
-
-    if ( uploadState == UPLOADSTATE_OPENINGFILE ) {
-        SdFile::dirName(dir, buffer);
-        readFile.open ( buffer, O_READ );
-        Serial.print ( "Processing File: " );
-        Serial.println ( buffer );
-        length = readFile.fileSize();
-        Serial.print ( "Length: " );
-        Serial.println ( length );
-        year = ( ( dir.lastWriteDate >> 9 ) & 0x7F ) + 1980;
-        month = ( dir.lastWriteDate >> 5 ) & 0x0F;
-        day = dir.lastWriteDate & 0x1F;
-        hour = ( dir.lastWriteTime >> 11 ) & 0x1F;
-        minute = ( dir.lastWriteTime >> 5 ) & 0x3F;
-        second = dir.lastWriteTime & 0x1F;
-
-        Serial.println( "Setting WIFLY_WEB_CONNECT to HIGH 1" );
-        setWiflyWebConnect ( HIGH );
-        fileStartTime = millis();
-        Serial.println ( "About to wait for WEB_CONNECTED" );
-        while ( ! digitalRead ( WIFLY_WEB_CONNECTED ) ) {
-
-        }
-        Serial.println ( "Done waiting for WEB_CONNECTED" );
-
-            // TODO: sprintf uses 2500 bytes. probably should be less lazy and construct the string by hand.
-        sprintf ( buffer, "%04d_%02d_%02d-%02d_%02d_%02d-%s", year, month, day, hour, minute, second, ( ( dir.name[6] == 'L' ) ? "log.csv" : "gps.nmea" ) );
-
-        writeWiFlySerial ( "POST /~altitude/TangoLogger/upload.cgi/" );
-        writeWiFlySerial ( buffer );
-        Serial.println ( buffer );
-        writeWiFlySerial ( " HTTP/1.0\r\n" );
-        writeWiFlySerial ( "Content-Length: " );
-        bufferString.begin();
-        bufferString.print ( length, DEC );
-        writeWiFlySerial ( buffer );
-        writeWiFlySerial ( "\r\n\r\n" );
-        bytesRead = 0;
-        totalBytesRead = 0;
-        uploadState = UPLOADSTATE_SENDINGDATA;
-        currentFileNumber++;
-    }
-
-    if ( uploadState == UPLOADSTATE_SENDINGDATA ) {
-        //Serial.println ( "sending data" );
-        unsigned long t1 = millis();
-        while ( ( millis() - t1 < 100 ) && 
-                ( bytesRead = readFile.read ( buffer, MAX_BUFSIZE ) ) > 0 ) {
-            totalBytesRead += bytesRead;
-            writeWiFlySerial ( buffer );
-        } 
-        
-        if ( bytesRead <= 0 ) {
-            readFile.close();
-            Serial.println ( "Done with file" );
-            uploadState = UPLOADSTATE_WAITING_FOR_SERVER_RESPONSE;
-            startWaitingForResponseTime = millis();
-            memset ( buffer, 0, MAX_BUFSIZE );
-            Serial.println ( "data from server follows" );
-        }
-    }
-
-    if ( uploadState == UPLOADSTATE_WAITING_FOR_SERVER_RESPONSE ) {
-        while ( wiflySerial.available() ) {
-            byteRead = wiflySerial.read();
-            Serial.write ( byteRead );
-            memmove ( buffer + 1, buffer, MAX_BUFSIZE - 1 );
-            buffer[MAX_BUFSIZE-1] = NULL;
-            buffer[0] = byteRead;
-            if ( ! strncmp ( buffer, "*SOLC*", 6 ) ) {
-                convertUploadFilename ( (char *)dir.name, buffer, true );
-                open_success = uploadFile.open ( buffer, O_WRITE | O_CREAT );
-                uploadFile.close();
-                uploadState = UPLOADSTATE_FINDFILES;
-                Serial.println( "Setting WIFLY_WEB_CONNECT to LOW 1" );
-                setWiflyWebConnect ( LOW );
-                Serial.print ( "creating 'done' file: " );
-                Serial.print ( buffer );
-                Serial.print ( ", success: " );
-                Serial.println ( open_success );
-                delay ( 500 );
-                //success!
-            } else if ( millis() - startWaitingForResponseTime > 5000 ) {
-                Serial.println( "Setting WIFLY_WEB_CONNECT to LOW 2" );
-                setWiflyWebConnect ( LOW );
-                //fail.
-            }
-        }
-    }
-}
-
-void updateDisplay_Upload() {
-    if ( stateChanged ) {
-        crystalFontz635.clearLCD();
-        lcdPrintString ( 0, 0, "Uploading..." );
-    }
-    bufferString.begin();
-    bufferString.print ( "File " );
-    bufferString.print ( currentFileNumber, DEC );
-    bufferString.print ( " of " );
-    bufferString.print ( filesToUploadCount, DEC );
-    lcdPrintString ( 1, 0, buffer );
-    float percent = ((float)totalBytesRead / dir.fileSize) * 100.0;
-    float tDiff = ( ( millis() - fileStartTime ) * ARDUINO_MILLIS_COMPENSATION_FACTOR ) / 1000;
-    lcdPrintFloat ( 2, 0, tDiff, 6, 2 );
-    lcdPrintFloat ( 2, 10, percent, 6, 2 );
-    float bytesPerSecond = totalBytesRead / tDiff;
-    lcdPrintFloat ( 3, 0, bytesPerSecond, 8, 2 );
-}
-
-bool writeWiFlySerial ( char buf[] ) {
-    char *p;
-    for ( p = buf; *p != (char)NULL; p++ ) {
-        writeWiFlySerialByte ( (byte)*p );
-    }
-}
-
-bool writeWiFlySerialInt ( int val, uint8_t size ) {
-    int i;
-    for ( i = size - 1; i >= 0; i-- ) {
-        Serial.println ( val >> ( i * 8 )  & 0xFF );
-
-        writeWiFlySerialByte ( val >> ( i * 8 )  & 0xFF );
-    }
-}
-
-#define WIFLY_WRITE_TIMEOUT 3000
-bool writeWiFlySerialByte ( byte b ) {
-    int iterations = 0;
-    unsigned long start = millis();
-    while ( ( millis() - start ) < WIFLY_WRITE_TIMEOUT ) {
-        iterations++;
-        if ( LOW == digitalRead ( WIFLY_CTS ) ) {
-            //Serial.write ( b );
-            wiflySerial.write ( b );
-            if ( iterations > 1 ) {
-                Serial.print ( "iterations: " );
-                Serial.println ( iterations, DEC );
-            }
-            return true;
-        }
-    }
-    return false;
 }
 
 void updateDisplayWithNewParams() {
@@ -659,16 +322,6 @@ void updateDisplay() {
     } else if ( programState == PROGRAMSTATE_MENU ) {
         updateDisplay_Menu();
         
-    } else if ( programState == PROGRAMSTATE_WIFLYDIRECT ) {
-        updateDisplay_WiflyDirect();
-
-    } else if ( ( programState == PROGRAMSTATE_UPLOAD ) &&
-                ( ( stateChanged ) || ( ( millis() - lastDisplayMillis ) * ARDUINO_MILLIS_COMPENSATION_FACTOR > 1000 ) ) ) {
-        lastDisplayMillis = millis();
-        updateDisplay_Upload();
-    } else if ( ( programState == PROGRAMSTATE_DIALOG ) && ( stateChanged ) ) {
-        updateDisplay_Dialog();
-
     }
 
     if ( ( bridgeInited ) && ( millis() - lastBridgeCheck > 500 ) ) {
@@ -685,23 +338,6 @@ void updateDisplay() {
                 Serial.print(c);
             }
             Serial.flush();
-    }
-
-/*
-    if ( digitalRead ( WIFLY_TCP_CONNECTED ) != lastWiflyTcpConnected ) {
-        lastWiflyTcpConnected = !lastWiflyTcpConnected;
-        setLedBooleanGreen ( 0, lastWiflyTcpConnected );
-    }
-*/
-
-    if ( wiflyWebConnect != lastWiflyWebConnect ) {
-        lastWiflyWebConnect = wiflyWebConnect;
-        setLedBooleanYellow ( 1, wiflyWebConnect );
-    }
-
-    if ( digitalRead ( WIFLY_WEB_CONNECTED ) != lastWiflyWebConnected ) {
-        lastWiflyWebConnected = !lastWiflyWebConnected;
-        setLedBooleanRed ( 2, lastWiflyWebConnected );
     }
 
     if ( bmsTripped ) {
@@ -724,21 +360,6 @@ void setLedBooleanRed ( uint8_t led, bool value ) {
     crystalFontz635.setLED ( led, ( value ) ? 100 : 0, 0 );
 }
 
-char *dialogStr0;
-
-void updateDisplay_Dialog() {
-    crystalFontz635.clearLCD();
-    lcdPrintString ( 0, 0, dialogStr0 );
-    lcdPrintString ( 3, 0, "Press OK or CANCEL" );
-}
-
-void processUserInput_Dialog ( Packet *packet ) {
-    if ( ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) || ( CFA635_KEY_ENTER_PRESS == packet->data[0] ) ) {
-        programState = PROGRAMSTATE_NORMAL;
-        stateChanged = true;
-    }
-}
- 
 /* 01234567890123456789
   +--------------------+
 0 |TangoLogger Init    |
@@ -774,15 +395,6 @@ void updateDisplay_Init() {
     init_logger();
     lcdPrintString_P ( 3, 0, 19 );
     lcdPrintInt ( 3, 9, file_num, 0, DEC );
-}
-
-void updateDisplay_WiflyDirect() {
-    if ( stateChanged ) {
-        crystalFontz635.clearLCD();
-        lcdPrintString_P ( 0, 0, 33 ); // WiFly Direct Mode
-        lcdPrintString_P ( 1, 0, 34 ); // Use Serial Console
-        lcdPrintString_P ( 2, 0, 35 ); // Cancel Btn exits
-    }
 }
 
 /*
@@ -835,15 +447,6 @@ void processUserInput() {
 
             } else if ( programState == PROGRAMSTATE_MENU ) {
                 processUserInput_Menu ( packet );
-
-            } else if ( programState == PROGRAMSTATE_WIFLYDIRECT ) {
-                processUserInput_WiflyDirect ( packet );
-
-            } else if ( programState == PROGRAMSTATE_UPLOAD ) {
-                processUserInput_Upload ( packet );
-
-            } else if ( programState == PROGRAMSTATE_DIALOG ) {
-                processUserInput_Dialog ( packet );
             }
         }
     }
@@ -903,20 +506,6 @@ void processUserInput_Menu ( Packet *packet ) {
                 EEPROM.write ( EEPROM_CONTRAST, contrast );
                 displayParamsChanged = true;
             }
-        } else if ( currentMenuItem == 3 ) {
-            deleteAllUploadFiles();
-            dialogStr0 = "Deleting UPL files";
-            programState = PROGRAMSTATE_DIALOG;
-            currentMenuItem = 0;
-            stateChanged = true;
-
-/*
-        // When adding the controller selection, no more WIFLYDIRECT. for now.
-        } else if ( currentMenuItem == 3 ) {
-            currentMenuItem = 0;
-            programState = PROGRAMSTATE_WIFLYDIRECT;
-            stateChanged = true;
-*/
         }
     } else if ( CFA635_KEY_RIGHT_PRESS == packet->data[0] ) {
         if ( currentMenuItem == 0 ) {
@@ -937,18 +526,14 @@ void processUserInput_Menu ( Packet *packet ) {
                 displayParamsChanged = true;
             }
         }
-        /*
-    } else if ( ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) ||
-                ( CFA635_KEY_ENTER_PRESS == packet->data[0] && currentMenuItem == 3 ) ) {
+    } else if ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) {
         programState = PROGRAMSTATE_NORMAL;
         currentMenuItem = 0;
         stateChanged = true;
-        */
 
     } else if ( CFA635_KEY_ENTER_PRESS == packet->data[0] && currentMenuItem == 3 ) {
-        Serial.println ( "Setting ProgramState to upload and stateChanged to true" );
         initBridge();
-        Serial.println ( "ABout to call curl" );
+        Serial.println ( "about to call upload.py" );
         uploadProcess.begin("/mnt/sda1/TangoLoggerUploader/upload.py");      
         uploadProcess.runAsynchronously();
         uploadStarted = true;
@@ -956,75 +541,6 @@ void processUserInput_Menu ( Packet *packet ) {
         programState = PROGRAMSTATE_NORMAL;
         currentMenuItem = 0;
         stateChanged = true;
-    }
-}
-
-bool lastWiFlyCTS = true;
-unsigned long lastFoo = 0;
-void processUserInput_WiflyDirect ( Packet *packet ) {
-    if ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) {
-        programState = PROGRAMSTATE_NORMAL;
-        stateChanged = true;
-    } else if ( CFA635_KEY_LEFT_PRESS == packet->data[0] ) {
-        digitalWrite ( WIFLY_RTS, LOW );
-        Serial.println ( "Setting RTS to LOW" );
-    } else if ( CFA635_KEY_RIGHT_PRESS == packet->data[0] ) {
-        digitalWrite ( WIFLY_RTS, HIGH );
-        Serial.println ( "Setting RTS to HIGH" );
-    } else if ( CFA635_KEY_DOWN_PRESS == packet->data[0] ) {
-        setWiflyWebConnect ( LOW );
-        Serial.println ( "Setting WIFLY_WEB_CONNECT to LOW 5" );
-    } else if ( CFA635_KEY_UP_PRESS == packet->data[0] ) {
-        setWiflyWebConnect ( HIGH );
-        Serial.println ( "Setting WIFLY_WEB_CONNECT to HIGH 6" );
-    }
-}
-
-void processUserInput_Upload ( Packet *packet ) {
-    if ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) {
-        programState = PROGRAMSTATE_NORMAL;
-        Serial.println( "Setting WIFLY_WEB_CONNECT to LOW 3" );
-        setWiflyWebConnect ( LOW );
-        stateChanged = true;
-    }
-}
-
-
-void loop_WiflyDirect() {
-    int wiflyCTS = digitalRead ( WIFLY_CTS );
-    if ( lastWiFlyCTS != wiflyCTS ) {
-        Serial.print ( "wiflyCTS changed to " );
-        Serial.println ( wiflyCTS, DEC );
-        lastWiFlyCTS = wiflyCTS;
-    }
-    if ( millis() - lastFoo > 1000 ) {
-        bool wiflyCTS = digitalRead ( WIFLY_CTS );
-        int tcpConnected = analogRead ( WIFLY_TCP_CONNECTED );
-        int webConnected = analogRead ( WIFLY_WEB_CONNECTED );
-        /*
-        Serial.print ( "Status: wiflyCTS: " );
-        Serial.print ( wiflyCTS );
-        Serial.print ( ", tcpConnected: " );
-        Serial.print ( tcpConnected, DEC );
-        Serial.print ( ", webConnected: " );
-        Serial.println ( webConnected, DEC );
-        */
-        lastFoo = millis();
-    }
-    if ( stateChanged ) {
-        Serial.println ( "Wifly Direct mode.  Don't forget line endinges (no line ending for '$$$', CRLF for everything else)" );
-            // make sure no residual data in the serial buffer sent to the wifly.
-        while ( Serial.available() ) {
-            Serial.read();
-        }
-    }
-    while ( wiflySerial.available() ) {
-        Serial.write ( wiflySerial.read() );
-    }
-
-    while ( Serial.available() ) {
-        byteRead = Serial.read();
-        writeWiFlySerialByte ( byteRead );
     }
 }
 
@@ -1070,13 +586,6 @@ void gatherAndLogData() {
     // get and process data from motor controller, which is either the KellyKLS_Serial or SevconGen4.
     if ( motorController->processData() ) {
         motorDirection = motorController->direction;
-        /*
-        motorController->throttlePercent = motorController->throttlePercent;
-        motorController->batteryVoltage = motorController->batteryVoltage;
-        motorController->controllerTemp = motorController->controllerTemp;
-        motorController->rpm = motorController->rpm;
-        motorController->motorCurrent = motorController->motorCurrent;
-        */
     }
 
         // Read battery current from hall sensor, and average it since the readings are somewhat jumpy.
@@ -1186,19 +695,17 @@ void gatherAndLogData() {
 #endif // MOTOR_THERMISTOR  29840
 
         if ( should_log ) {
-            File dataFile = FileSystem.open(logFileName, FILE_APPEND);
+            File dataFile = FileSystem.open(linuxLogfileName, FILE_APPEND);
             stream = &logString;
             logString.begin();
             printLong ( *stream, currentMillis, DEC );
             printFloat ( *stream, (float)currentMillis * ARDUINO_MILLIS_COMPENSATION_FACTOR, 4 );
-            //printInt ( *stream, diff_gps_time, DEC );
             printLong ( *stream, loopsSinceLastLog, DEC );
             printIntLeadingZero ( *stream, year ); printIntLeadingZero ( *stream, month ); printIntLeadingZero ( *stream, day ); printString_P ( *stream, 5 );
             printIntLeadingZero ( *stream, hour ); printIntLeadingZero ( *stream, minute ); printIntLeadingZero ( *stream, second ); printString_P ( *stream, 5 );
             printInt ( *stream, fix_age, DEC );
             printFloat ( *stream, speed_GPS, 2 );
             printFloat ( *stream, speed_RPM, 2 );
-            //printFloat ( *stream, motorController->speed, 2 );
             printFloat ( *stream, flat, 5 );
             printFloat ( *stream, flon, 5 );
             printFloat ( *stream, fcourse, 2 );
@@ -1208,7 +715,6 @@ void gatherAndLogData() {
             printFloat ( *stream, distance_RPM / 100000000, 5 );
             printFloat ( *stream, motorController->rpm, 5 );
             printFloat ( *stream, motorController->batteryVoltage, 3 );
-            //printFloat ( *stream, batteryCurrentReadingTotal, DEC );
             printFloat ( *stream, batteryCurrentAvg, 5 );
             printFloat ( *stream, batteryCurrentReadingSingle, DEC );
             printFloat ( *stream, batteryCurrentSingle, 5 );
@@ -1228,13 +734,11 @@ void gatherAndLogData() {
             printFloat ( *stream, c, 2 );
             printInt ( *stream, motorThermistorReading, DEC );
             printFloat ( *stream, motorController->throttlePercent, 4 );
-            //printFloat ( *stream, motorController->bdi, 4 );
             printFloat ( *stream, motorController->controllerTemp, 4 );
             printInt ( *stream, motorDirection, DEC );
             KellyKLS_Serial *klsController = (KellyKLS_Serial *)motorController;
             printInt ( *stream, millis() - klsController->last3APacketReceivedMillis, DEC );
             printInt ( *stream, millis() - klsController->last3BPacketReceivedMillis, DEC );
-            //printLine ( *stream );
             dataFile.println(logString);
             dataFile.close();
             //Serial.println(logString);
@@ -1247,7 +751,6 @@ void gatherAndLogData() {
         batteryCurrentReadingTotal = 0;
         last_gps_time = cur_gps_time;
     }
-
 
     if ( ( currentMillis - lastSaveMillis ) >= 5000 ) {
         gps.stats ( NULL, NULL, &failed_cs );
@@ -1505,57 +1008,43 @@ void init_logger() {
     Serial.println ( file_num, DEC );
 }
 
-void create_filename ( uint16_t num ) {
-    strcpy_P ( buffer, (char*)pgm_read_word ( &(strings[21]) ) ); // base filename
-    buffer[0] = num / 10000 + '0';
-    buffer[1] = num % 10000 / 1000 + '0';
-    buffer[2] = num % 1000 / 100 + '0';
-    buffer[3] = num % 100 / 10 + '0';
-    buffer[4] = num % 10 + '0';
-
-    strcpy_P ( logFileName, (char*)pgm_read_word ( &(strings[42]) ) ); // base filename
-    logFileName[26] = num / 10000 + '0';
-    logFileName[27] = num % 10000 / 1000 + '0';
-    logFileName[28] = num % 1000 / 100 + '0';
-    logFileName[29] = num % 100 / 10 + '0';
-    logFileName[30] = num % 10 + '0';
-}
-
 void open_logFiles() {
     file_num = getCurrentFileNum();
-    create_filename ( file_num );
-    if ( ! logFile.open ( buffer, O_WRITE | O_CREAT ) ) {
-        log_ok = false;
-    }
+    strcpy_P ( buffer, (char*)pgm_read_word ( &(strings[21]) ) ); // local SD filename
+    strcpy_P ( linuxLogfileName, (char*)pgm_read_word ( &(strings[42]) ) ); // linux /mnt/sda1... filename
+    buffer[0] = linuxLogfileName[26] = file_num / 10000 + '0';
+    buffer[1] = linuxLogfileName[27] = file_num % 10000 / 1000 + '0';
+    buffer[2] = linuxLogfileName[28] = file_num % 1000 / 100 + '0';
+    buffer[3] = linuxLogfileName[29] = file_num % 100 / 10 + '0';
+    buffer[4] = linuxLogfileName[30] = file_num % 10 + '0';
+    logFile.open ( buffer, O_WRITE | O_CREAT );
 
     buffer[6] = 'N';
     buffer[7] = 'M';
     buffer[9] = 'g';
     buffer[10] = 'p';
     buffer[11] = 's';
-    if ( ! nmeaFile.open ( buffer, O_WRITE | O_CREAT ) ) {
-        log_ok = false;
-    }
+    nmeaFile.open ( buffer, O_WRITE | O_CREAT );
+
     logFiles_open = true;
     EEPROM.write ( EEPROM_FILENUM_MSB, ( ( file_num + 1 ) >> 8 ) & 0xFF );
     EEPROM.write ( EEPROM_FILENUM_LSB, ( file_num + 1 ) & 0xFF );
-    printString_P ( *stream, 27 ); // Output Format type
-    printFloat ( *stream, ARDUINO_MILLIS_COMPENSATION_FACTOR, 6 ); // include ardunio millis compensation for later analysis.
-    printLine ( *stream );
 
-    // we're telling the user that we're initializing the bridge b/c it could take some time.
+    bufferString.begin();
+    stream = &bufferString;
+    printString_P ( *stream, 27);
+    printFloat ( *stream, ARDUINO_MILLIS_COMPENSATION_FACTOR, 6 ); // include ardunio millis compensation for later analysis.
+
     initBridge();
-    Serial.println ( "About to open File on Bridge" );
-    Serial.print ( "Got Log file name: " );
-    Serial.println ( logFileName );
-    File dataFile = FileSystem.open(logFileName, FILE_APPEND);
-    dataFile.println ( "#LOGFMT 10 1.001884" );
+    File dataFile = FileSystem.open(linuxLogfileName, FILE_APPEND);
+    dataFile.println(buffer);
     dataFile.close();
+
+    logFile.println(buffer);
 }
 
 void initBridge() {
     if ( bridgeInited == false ) {
-        Serial.println ( "About to call bridge.begin()" );
         crystalFontz635.clearLCD();
         printString_P ( *stream, 43 ); // initializing Bridge
         lcdPrintString_P ( 1, 0, 43 ); // TangoLogger Init
@@ -1566,10 +1055,3 @@ void initBridge() {
         setLedBooleanGreen ( 0, true );
     }
 }
-
-
-void setWiflyWebConnect ( boolean value ) {
-    wiflyWebConnect = value;
-    digitalWrite ( WIFLY_WEB_CONNECT, value );
-}
-
