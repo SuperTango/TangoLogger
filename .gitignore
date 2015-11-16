@@ -4,3 +4,6 @@
 wifly-configs
 libraries
 .DS_Store
+client.py
+on.py
+off.py
