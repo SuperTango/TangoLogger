@@ -3,6 +3,7 @@
      */
 #define MOTOR_THERMISTOR
 
+#include <Bridge.h>
 #include <FileIO.h>
 #include <SdFat.h>
 #include <SdFatUtil.h>
@@ -81,7 +82,7 @@ AltSoftSerial controllerSerial;
 
     // Local SD File logging
 SdFat sd;
-SdFile logFile;
+SdFile arduinoLogFile;
 SdFile nmeaFile;
 
     // For linux side logfile stuff.
@@ -95,15 +96,18 @@ uint16_t file_num = 0;
 MotorController *motorController;
 int8_t motorDirection;
 
+SerialBridgeClass Bridge2(Serial2);
+FileSystemClass fileSystem2(Bridge2);
+
     // Bridge stuff
 bool bridgeInited = false;
 unsigned long lastBridgeCheck = 0;
-Process uploadProcess;
+Process uploadProcess ( Bridge2 );
 bool uploadStarted = false;
 char bridgeBuffer[10];
 
 //Print *stream = &Serial;
-Print *stream = &logFile;
+Print *stream = &arduinoLogFile;
 bool logFiles_open = false;
 bool should_log = false;
 
@@ -326,7 +330,7 @@ void updateDisplay() {
 
     if ( ( bridgeInited ) && ( millis() - lastBridgeCheck > 500 ) ) {
         lastBridgeCheck = millis();
-        Bridge.get("is_uploading",bridgeBuffer,10);
+        Bridge2.get("is_uploading",bridgeBuffer,10);
         if ( bridgeBuffer[0] == 'Y' ) {
             setLedBooleanYellow ( 2, true );
         } else {
@@ -466,6 +470,9 @@ void processUserInput_Normal ( Packet *packet ) {
         normalDisplayPage = !normalDisplayPage;
         dataChanged = true;
 
+    } else if ( CFA635_KEY_LEFT_PRESS == packet->data[0] ) {
+        initBridge();
+
     } else if ( CFA635_KEY_DOWN_PRESS == packet->data[0] ) {
         should_log = true;
         dataChanged = true;
@@ -506,6 +513,11 @@ void processUserInput_Menu ( Packet *packet ) {
                 EEPROM.write ( EEPROM_CONTRAST, contrast );
                 displayParamsChanged = true;
             }
+        } else if ( currentMenuItem == 3 ) {
+            initBridge();
+            Serial.println ( "about to call setup-JotLean2" );
+            uploadProcess.begin("/mnt/sda1/TangoLoggerUploader/setup-JotLean2.sh");      
+            uploadProcess.runAsynchronously();
         }
     } else if ( CFA635_KEY_RIGHT_PRESS == packet->data[0] ) {
         if ( currentMenuItem == 0 ) {
@@ -525,6 +537,11 @@ void processUserInput_Menu ( Packet *packet ) {
                 EEPROM.write ( EEPROM_CONTRAST, contrast );
                 displayParamsChanged = true;
             }
+        } else if ( currentMenuItem == 3 ) {
+            initBridge();
+            Serial.println ( "about to call setup-StartX" );
+            uploadProcess.begin("/mnt/sda1/TangoLoggerUploader/setup-StartX.sh");      
+            uploadProcess.runAsynchronously();
         }
     } else if ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) {
         programState = PROGRAMSTATE_NORMAL;
@@ -537,6 +554,9 @@ void processUserInput_Menu ( Packet *packet ) {
         uploadProcess.begin("/mnt/sda1/TangoLoggerUploader/upload.py");      
         uploadProcess.runAsynchronously();
         uploadStarted = true;
+
+        should_log = false;
+        logFiles_open = false;
 
         programState = PROGRAMSTATE_NORMAL;
         currentMenuItem = 0;
@@ -695,11 +715,13 @@ void gatherAndLogData() {
 #endif // MOTOR_THERMISTOR  29840
 
         if ( should_log ) {
-            File dataFile = FileSystem.open(linuxLogfileName, FILE_APPEND);
+            //File linuxLogFile = fileSystem2.open(linuxLogfileName, FILE_APPEND);
+            File linuxLogFile(linuxLogfileName, FILE_APPEND, Bridge2);
             stream = &logString;
             logString.begin();
             printLong ( *stream, currentMillis, DEC );
             printFloat ( *stream, (float)currentMillis * ARDUINO_MILLIS_COMPENSATION_FACTOR, 4 );
+            printInt ( *stream, diff_gps_time, DEC );
             printLong ( *stream, loopsSinceLastLog, DEC );
             printIntLeadingZero ( *stream, year ); printIntLeadingZero ( *stream, month ); printIntLeadingZero ( *stream, day ); printString_P ( *stream, 5 );
             printIntLeadingZero ( *stream, hour ); printIntLeadingZero ( *stream, minute ); printIntLeadingZero ( *stream, second ); printString_P ( *stream, 5 );
@@ -739,8 +761,9 @@ void gatherAndLogData() {
             KellyKLS_Serial *klsController = (KellyKLS_Serial *)motorController;
             printInt ( *stream, millis() - klsController->last3APacketReceivedMillis, DEC );
             printInt ( *stream, millis() - klsController->last3BPacketReceivedMillis, DEC );
-            dataFile.println(logString);
-            dataFile.close();
+            linuxLogFile.println(logString);
+            linuxLogFile.close();
+            arduinoLogFile.println(logString);
             //Serial.println(logString);
         }
 
@@ -756,7 +779,7 @@ void gatherAndLogData() {
         gps.stats ( NULL, NULL, &failed_cs );
         failed_cs_diff = failed_cs - failed_cs_last;
         failed_cs_last = failed_cs;
-        logFile.sync();
+        arduinoLogFile.sync();
         nmeaFile.sync();
         lastSaveMillis = currentMillis;
     }
@@ -1017,7 +1040,7 @@ void open_logFiles() {
     buffer[2] = linuxLogfileName[28] = file_num % 1000 / 100 + '0';
     buffer[3] = linuxLogfileName[29] = file_num % 100 / 10 + '0';
     buffer[4] = linuxLogfileName[30] = file_num % 10 + '0';
-    logFile.open ( buffer, O_WRITE | O_CREAT );
+    arduinoLogFile.open ( buffer, O_WRITE | O_CREAT );
 
     buffer[6] = 'N';
     buffer[7] = 'M';
@@ -1030,26 +1053,28 @@ void open_logFiles() {
     EEPROM.write ( EEPROM_FILENUM_MSB, ( ( file_num + 1 ) >> 8 ) & 0xFF );
     EEPROM.write ( EEPROM_FILENUM_LSB, ( file_num + 1 ) & 0xFF );
 
-    bufferString.begin();
-    stream = &bufferString;
-    printString_P ( *stream, 27);
-    printFloat ( *stream, ARDUINO_MILLIS_COMPENSATION_FACTOR, 6 ); // include ardunio millis compensation for later analysis.
-
     initBridge();
-    File dataFile = FileSystem.open(linuxLogfileName, FILE_APPEND);
-    dataFile.println(buffer);
-    dataFile.close();
 
-    logFile.println(buffer);
+    bufferString.begin();
+    bufferString.print ( "#LOGFMT 10 " );
+    bufferString.print ( ARDUINO_MILLIS_COMPENSATION_FACTOR, 6 );
+    Serial.println ( bufferString );
+
+    //File linuxLogFile = fileSystem2.open(linuxLogfileName, FILE_APPEND);
+    File linuxLogFile(linuxLogfileName, FILE_APPEND, Bridge2);
+    linuxLogFile.println(bufferString);
+    linuxLogFile.close();
+
+    arduinoLogFile.println(bufferString);
 }
 
 void initBridge() {
     if ( bridgeInited == false ) {
         crystalFontz635.clearLCD();
-        printString_P ( *stream, 43 ); // initializing Bridge
+        printlnString_P ( Serial, 43 ); // initializing Bridge
         lcdPrintString_P ( 1, 0, 43 ); // TangoLogger Init
-        Bridge.begin();
-        FileSystem.begin();
+        Bridge2.begin();
+        fileSystem2.begin();
         dataChanged = true;
         bridgeInited = true;
         setLedBooleanGreen ( 0, true );
