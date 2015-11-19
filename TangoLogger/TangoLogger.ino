@@ -33,12 +33,16 @@ void printString_P ( Print &stream, int index );
 #define CONTROLLER_TYPE_KLS_S 0
 #define CONTROLLER_TYPE_SEVCONGEN4 1
 
+#define WIFI_NETWORK_HOME               0
+#define WIFI_NETWORK_WORK               1
+
     // EEPROM data
 #define EEPROM_FILENUM_MSB              0
 #define EEPROM_FILENUM_LSB              1
 #define EEPROM_BRIGHTNESS               2
 #define EEPROM_CONTRAST                 3
 #define EEPROM_CONTROLLER_TYPE          4
+#define EEPROM_WIFI_NETWORK             5
 
 #define MENU_MAX_ITEMS                  4
 
@@ -189,7 +193,7 @@ const char str10[] PROGMEM = "D:";
 const char str11[] PROGMEM = "NO CANBUS";
 const char str12[] PROGMEM = "FULL";
 const char str13[] PROGMEM = "Wh:";
-const char str14[] PROGMEM = "Syncing files";
+const char str14[] PROGMEM = "Work";
 const char str15[] PROGMEM = "DONE";
 const char str16[] PROGMEM = "%:";
 const char str17[] PROGMEM = "Brightness";
@@ -208,8 +212,8 @@ const char str29[] PROGMEM = { 0x10, 0x0 }; // arrow (for menu)
 const char str30[] PROGMEM = "Contrast";
 const char str31[] PROGMEM = "Start Upload...";
 const char str32[] PROGMEM = "Exit";
-const char str33[] PROGMEM = "WiFly Direct mode.";
-const char str34[] PROGMEM = "Use Serial Console.";
+const char str33[] PROGMEM = "Setting Wifi: ";
+const char str34[] PROGMEM = "Home";
 const char str35[] PROGMEM = "Cancel (X) Btn exits";
 const char str36[] PROGMEM = "Kelly KLS-S";
 const char str37[] PROGMEM = "Sevcon Gen4";
@@ -539,8 +543,22 @@ void processUserInput_Menu ( Packet *packet ) {
             }
         } else if ( currentMenuItem == 3 ) {
             initBridge();
-            Serial.println ( "about to call setup-StartX" );
-            uploadProcess.begin("/mnt/sda1/TangoLoggerUploader/setup-StartX.sh");      
+
+            crystalFontz635.clearLCD();
+
+            lcdPrintString_P ( 1, 0, 33 ); // setup wifi
+            printString_P ( Serial, 33 );
+            float distanceToHome = gps.distance_between ( 37.394897, -122.056528, flat, flon );
+            float distanceToWork = gps.distance_between ( 37.422662, -122.157755, flat, flon );
+            if ( distanceToHome < distanceToWork ) {
+                strcpy_P ( buffer, (char*)pgm_read_word ( &(strings[34]) ) ); //Home
+            } else {
+                strcpy_P ( buffer, (char*)pgm_read_word ( &(strings[14]) ) ); //Work
+            }
+            lcdPrintString ( 1, 14, buffer );
+            Serial.println ( buffer );
+            uploadProcess.begin("/mnt/sda1/TangoLoggerUploader/setup-network.sh");
+            uploadProcess.addParameter(buffer);
             uploadProcess.runAsynchronously();
         }
     } else if ( CFA635_KEY_EXIT_PRESS == packet->data[0] ) {
