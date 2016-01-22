@@ -25,7 +25,7 @@ void printString_P ( Print &stream, int index );
 #define METERSTOMILES 0.000621371192
     // this is to compenstate for the fact that the previous physical arduino board i was using had a wildly wrong clock counter.  1 "real" second == about 750 millis().  ?!?!
     // the current board is much better.
-#define ARDUINO_MILLIS_COMPENSATION_FACTOR 1.001883884
+#define ARDUINO_MILLIS_COMPENSATION_FACTOR 0.984217788
 #define MILLISPERHOUR 3600000
 #define GPSRATE 4800
 #define COMMA ","
