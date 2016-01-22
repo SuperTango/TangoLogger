@@ -2,8 +2,16 @@
 .*.swo
 *~
 wifly-configs
-libraries
 .DS_Store
 client.py
 on.py
 off.py
+AltSoftSerial.zip
+PString
+TinyGPS-13.zip
+TinyGPS13.zip
+TinyGPS13/
+sdfatlib20131225.zip
+sdfatlib20131225/
+crctest_java
+Sizing.xlsx
